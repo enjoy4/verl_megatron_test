@@ -171,12 +171,14 @@ class MegatronRewardModel(BasePPORewardModel):
             logits = logits.to(torch.float32)
 
             # broadcast across pp ranks
-            torch.distributed.broadcast(
-                tensor=logits,
-                src=mpu.get_pipeline_model_parallel_last_rank(),
-                group=mpu.get_pipeline_model_parallel_group(),
-                async_op=False,
-            )
+            
+            with torch.no_grad():
+                torch.distributed.broadcast(
+                    tensor=logits,
+                    src=mpu.get_pipeline_model_parallel_last_rank(),
+                    group=mpu.get_pipeline_model_parallel_group(),
+                    async_op=False,
+                )
 
         # (bs, seqlen', hidden_size) -> (bs, seqlen', 1) -> (bs, seqlen')
         token_level_rewards = logits

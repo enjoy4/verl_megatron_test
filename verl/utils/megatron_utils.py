@@ -631,7 +631,8 @@ def broadcast_from_megatron_pp(tensor: torch.Tensor):
             tensor.partition_dim = target_tensor_spec[3]
 
     global_rank = torch.distributed.get_global_rank(group=mpu.get_pipeline_model_parallel_group(), group_rank=src_rank)
-    torch.distributed.broadcast(tensor=tensor, src=global_rank, group=mpu.get_pipeline_model_parallel_group())
+    with torch.no_grad():
+        torch.distributed.broadcast(tensor=tensor, src=global_rank, group=mpu.get_pipeline_model_parallel_group())
     return tensor
 
 

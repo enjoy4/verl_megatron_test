@@ -85,10 +85,16 @@ def default_compute_score(
 
             # Assuming prime_code doesn't need the URL
             res = prime_code.compute_score(solution_str, ground_truth, continuous=True)
-    elif data_source in ["hiyouga/geometry3k"]:
+    elif data_source in ["hiyouga/geometry3k","cosmos"]:
         from . import geo3k
 
         res = geo3k.compute_score(solution_str, ground_truth)
+    elif data_source in [ "egolife", "cosmos", "erqa","scannet"]:
+        # res = geo3k.compute_score(solution_str, ground_truth, format_score=0.5)
+        from . import egolife
+
+        res = egolife.compute_score(solution_str, ground_truth)
+
     elif data_source in [
         "searchR1_nq",
         "searchR1_triviaqa",

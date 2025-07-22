@@ -18,7 +18,7 @@ optim:
 
   optimizer: adam
 
-  clip_grad: 1.0
+  clip_grad: 5.0
 
   # initial learning rate for warmup, default to 0.0
   lr_warmup_init: 0.0

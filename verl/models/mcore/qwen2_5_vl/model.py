@@ -234,9 +234,18 @@ class Qwen2_5VLModel(MegatronModule):
             video_start_index = image_mask.sum().item()
         if video_grid_thw is not None:
             video_mask = input_ids == self.video_token_id
-            vision_grid_thw = torch.cat([vision_grid_thw, video_grid_thw], dim=0)
-            vision_data = torch.cat([vision_data, pixel_values_videos], dim=0)
-            video_start_index = image_mask.sum().item() + video_mask.sum().item()
+
+            # vision_grid_thw = torch.cat([vision_grid_thw, video_grid_thw], dim=0)
+            # vision_data = torch.cat([vision_data, pixel_values_videos], dim=0)
+            # video_start_index = image_mask.sum().item() + video_mask.sum().item()
+            if image_grid_thw is not None:
+                vision_grid_thw = torch.cat([vision_grid_thw, video_grid_thw], dim=0)
+                vision_data = torch.cat([vision_data, pixel_values_videos], dim=0)
+                video_start_index = image_mask.sum().item() + video_mask.sum().item()
+            else:
+                vision_grid_thw = video_grid_thw
+                vision_data = pixel_values_videos
+                video_start_index = video_mask.sum().item()   
         use_inference_kv_cache = (
             inference_params is not None and "image_tokens_count" in inference_params.key_value_memory_dict
         )

@@ -235,12 +235,13 @@ class MegatronPPOActor(BasePPOActor):
                     )
 
                 # broadcast across pp ranks
-                torch.distributed.broadcast(
-                    tensor=log_probs,
-                    src=mpu.get_pipeline_model_parallel_last_rank(),
-                    group=mpu.get_pipeline_model_parallel_group(),
-                    async_op=False,
-                )
+                with torch.no_grad():
+                    torch.distributed.broadcast(
+                        tensor=log_probs,
+                        src=mpu.get_pipeline_model_parallel_last_rank(),
+                        group=mpu.get_pipeline_model_parallel_group(),
+                        async_op=False,
+                    )
                 if calculate_entropy:
                     # Note that o[0] is metrics, o[1] is entropy
                     if mpu.is_pipeline_last_stage(ignore_virtual=True):
@@ -257,15 +258,18 @@ class MegatronPPOActor(BasePPOActor):
                             size=(batch_size, response_length), dtype=torch.float32, device=input_ids.device
                         )
                     # broadcast across pp ranks
-                    torch.distributed.broadcast(
-                        tensor=entropys,
-                        src=mpu.get_pipeline_model_parallel_last_rank(),
-                        group=mpu.get_pipeline_model_parallel_group(),
-                        async_op=False,
-                    )
+                    with torch.no_grad():
+                        torch.distributed.broadcast(
+                            tensor=entropys,
+                            src=mpu.get_pipeline_model_parallel_last_rank(),
+                            group=mpu.get_pipeline_model_parallel_group(),
+                            async_op=False,
+                        )
 
         # add empty cache after each compute
         get_torch_device().empty_cache()
+        print("log_probs.requires_grad:", log_probs.requires_grad)
+        print("entropys.requires_grad:", entropys.requires_grad)
 
         return log_probs, entropys
 
@@ -640,9 +644,11 @@ class MegatronPPOActor(BasePPOActor):
             for metric in metric_micro_batch:
                 # Note that o[0] is metrics, o[1] is entropy, o[2] is response_mask
                 append_to_dict(metrics, metric[0])  # append the metric from this micro-batch to global metrics.
-
             update_successful, grad_norm, num_zeros_in_grad = self.actor_optimizer.step()
+            # print("grad_norm", grad_norm.mean(), grad_norm.min(), grad_norm.max())
+            print("joy grad_norm:", grad_norm)
             data = {"actor/grad_norm": grad_norm}
+
             append_to_dict(metrics, data)
 
             if update_successful:
