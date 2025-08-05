@@ -213,6 +213,12 @@ class RLHFDataset(Dataset):
         Note that we also return the raw_input_ids so that it can be combined with other chat template
         """
         row_dict: dict = self.dataframe[item]
+
+        # Remove the images/videos field (if present and None)
+        for k in ["images", "videos"]:
+            if k in row_dict and row_dict[k] is None:
+                del row_dict[k]
+
         messages = self._build_messages(row_dict)
         model_inputs = {}
 
@@ -224,40 +230,69 @@ class RLHFDataset(Dataset):
 
             images = None
             if self.image_key in row_dict and row_dict.get(self.image_key, None) is not None:
-                images = [process_image(image) for image in row_dict.pop(self.image_key)]
+                try:
+                    images = [process_image(image) for image in row_dict.pop(self.image_key)]
+                except Exception as e:
+                    # avoid multimodal source files not existing
+                    raise RuntimeError(f"Failed to process images for key '{self.image_key}': {e}") from e
 
                 # due to the image key is "image" instead of "images" in vllm, we need to use "image" here
                 # link: https://github.com/vllm-project/vllm/blob/3c545c0c3b98ee642373a308197d750d0e449403/vllm/multimodal/parse.py#L205
                 multi_modal_data["image"] = images
+            else:
+                # pure text item fills empty fields to align batchsize
+                multi_modal_data["image"] = []
 
             videos = None
             if self.video_key in row_dict and row_dict.get(self.video_key, None) is not None:
-                videos = [process_video(video) for video in row_dict.pop(self.video_key)]
+                try:
+                    videos = [process_video(video) for video in row_dict.pop(self.video_key)]
+                except Exception as e:
+                    raise RuntimeError(f"Failed to process video for key '{self.video_key}': {e}") from e
 
                 # due to the video key is "video" instead of "videos" in vllm, we need to use "video" here
                 # link: https://github.com/vllm-project/vllm/blob/3c545c0c3b98ee642373a308197d750d0e449403/vllm/multimodal/parse.py#L205
                 multi_modal_data["video"] = [video.numpy() for video in videos]
+            else:
+                # pure text item fills empty fields to align batchsize
+                multi_modal_data["video"] = []
 
-            model_inputs = self.processor(text=[raw_prompt], images=images, videos=videos, return_tensors="pt")
+            if images is not None or videos is not None:
+                model_inputs = self.processor(text=[raw_prompt], images=images, videos=videos, return_tensors="pt")
 
-            input_ids = model_inputs.pop("input_ids")
-            attention_mask = model_inputs.pop("attention_mask")
+                input_ids = model_inputs.pop("input_ids")
+                attention_mask = model_inputs.pop("attention_mask")
 
-            if "second_per_grid_ts" in model_inputs:
-                model_inputs.pop("second_per_grid_ts")
+                if "second_per_grid_ts" in model_inputs:
+                    model_inputs.pop("second_per_grid_ts")
 
-            # There's a trap here, multi_modal_inputs has to be a dict, not BatchFeature
-            row_dict["multi_modal_data"] = multi_modal_data
+                # There's a trap here, multi_modal_inputs has to be a dict, not BatchFeature
+                row_dict["multi_modal_data"] = multi_modal_data
 
-            # We will do batch.union() in the trainer,
-            # so we cannot have "multi_modal_inputs" in row_dict if rollout generates new multi_modal_inputs
-            if self.return_multi_modal_inputs:
-                row_dict["multi_modal_inputs"] = dict(model_inputs)
+                # We will do batch.union() in the trainer,
+                # so we cannot have "multi_modal_inputs" in row_dict if rollout generates new multi_modal_inputs
+                if self.return_multi_modal_inputs:
+                    row_dict["multi_modal_inputs"] = dict(model_inputs)
 
-                # second_per_grid_ts isn't used for training, just for mrope
-                row_dict["multi_modal_inputs"].pop("second_per_grid_ts", None)
+                    # second_per_grid_ts isn't used for training, just for mrope
+                    row_dict["multi_modal_inputs"].pop("second_per_grid_ts", None)
+            else:
+                # pure text item
+                trigger = "\n\nPlease reason step by step and put the final answer within \\boxed{}."
+                messages[-1]['content'] = messages[-1]['content'] + trigger
+
+                # text placeholders are used to unify the batch-size
+                row_dict["multi_modal_data"] = multi_modal_data
+                if self.return_multi_modal_inputs:
+                    row_dict["multi_modal_inputs"] = {}
+
+                raw_prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+                model_inputs = self.tokenizer(raw_prompt, return_tensors="pt", add_special_tokens=False)
+                input_ids = model_inputs.pop("input_ids")
+                attention_mask = model_inputs.pop("attention_mask")
 
         else:
+            # image/video processor is None, pure text
             raw_prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
             model_inputs = self.tokenizer(raw_prompt, return_tensors="pt", add_special_tokens=False)
             input_ids = model_inputs.pop("input_ids")
@@ -274,17 +309,41 @@ class RLHFDataset(Dataset):
 
         if self.processor is not None and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:
             from verl.models.transformers.qwen2_vl import get_rope_index
+            position_ids = None
 
-            position_ids = [
-                get_rope_index(
-                    self.processor,
-                    input_ids=input_ids[0],
-                    image_grid_thw=model_inputs.get("image_grid_thw"),
-                    video_grid_thw=model_inputs.get("video_grid_thw"),
-                    second_per_grid_ts=model_inputs.get("second_per_grid_ts"),
-                    attention_mask=attention_mask[0],
-                )
-            ]  # (1, 3, seq_len)
+            if images and not videos:
+                position_ids = [
+                    get_rope_index(
+                        self.processor,
+                        input_ids=input_ids[0],
+                        image_grid_thw=model_inputs.get("image_grid_thw"),
+                        second_per_grid_ts=model_inputs.get("second_per_grid_ts"),
+                        attention_mask=attention_mask[0],
+                    )
+                ]  # (1, 3, seq_len)
+            elif videos and not images:
+                position_ids = [
+                    get_rope_index(
+                        self.processor,
+                        input_ids=input_ids[0],
+                        video_grid_thw=model_inputs.get("video_grid_thw"),
+                        second_per_grid_ts=model_inputs.get("second_per_grid_ts"),
+                        attention_mask=attention_mask[0],
+                    )
+                ]  # (1, 3, seq_len)
+            elif videos and images:
+                position_ids = [
+                    get_rope_index(
+                        self.processor,
+                        input_ids=input_ids[0],
+                        image_grid_thw=model_inputs.get("image_grid_thw"),
+                        video_grid_thw=model_inputs.get("video_grid_thw"),
+                        second_per_grid_ts=model_inputs.get("second_per_grid_ts"),
+                        attention_mask=attention_mask[0],
+                    )
+                ]  # (1, 3, seq_len)
+            else:
+                position_ids = compute_position_id_with_mask(attention_mask)
 
         else:
             position_ids = compute_position_id_with_mask(attention_mask)

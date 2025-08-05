@@ -263,13 +263,20 @@ class vLLMRollout(BaseRollout):
 
         if batch_size != len(non_tensor_batch["raw_prompt_ids"]):
             raise RuntimeError("vllm sharding manager is not work properly.")
-
+        
         if "multi_modal_data" in non_tensor_batch:
+            raw_prompt_ids_list = non_tensor_batch.pop("raw_prompt_ids")
+            multi_modal_data_list = non_tensor_batch.pop("multi_modal_data")
             vllm_inputs = []
-            for raw_prompt_ids, multi_modal_data in zip(
-                non_tensor_batch.pop("raw_prompt_ids"), non_tensor_batch.pop("multi_modal_data"), strict=True
-            ):
-                vllm_inputs.append({"prompt_token_ids": raw_prompt_ids, "multi_modal_data": multi_modal_data})
+            for raw_prompt_ids, multi_modal_data in zip(raw_prompt_ids_list, multi_modal_data_list):
+                # determine whether all fields in multi_modal_data are empty lists
+                if isinstance(multi_modal_data, dict) and all(
+                    isinstance(v, list) and not v for v in multi_modal_data.values()
+                ):
+                    # all empty, this is plain text and multi_modal_data is ignored.
+                    vllm_inputs.append({"prompt_token_ids": raw_prompt_ids})
+                else:
+                    vllm_inputs.append({"prompt_token_ids": raw_prompt_ids, "multi_modal_data": multi_modal_data})
         else:
             vllm_inputs = [
                 {"prompt_token_ids": raw_prompt_ids} for raw_prompt_ids in non_tensor_batch.pop("raw_prompt_ids")

@@ -492,13 +492,21 @@ class MegatronPPOActor(BasePPOActor):
             position_ids = batch["position_ids"]
 
             multi_modal_inputs = {}
-            if "multi_modal_inputs" in batch:
-                for key in batch["multi_modal_inputs"][0].keys():
-                    idxs = batch["multi_modal_inputs_idx"]
-                    mmi = batch["multi_modal_inputs"]
-                    multi_modal_inputs[key] = torch.cat(
-                        [mmi[idx].get(key) for idx in idxs if mmi[idx].get(key) is not None], dim=0
-                    )
+            idx_list = batch["multi_modal_inputs_idx"]
+            all_keys = set()
+            # collect keys from all samples; first may be text-only
+            for i in idx_list:
+                all_keys.update(batch["multi_modal_inputs"][i].keys())
+            for key in all_keys:
+                tensors = []
+                for i in idx_list:                          # keep original order
+                    val = batch["multi_modal_inputs"][i].get(key)
+                    if val is not None:                     # skip pure‑text rows
+                        tensors.append(val)
+                if tensors:                                 # at least one visual tensor
+                    cat_tensor = torch.cat(tensors, dim=0)
+                    multi_modal_inputs[key] = cat_tensor
+
             responses = batch["responses"]
             response_length = responses.size(1)
             label = position_ids.clone()
