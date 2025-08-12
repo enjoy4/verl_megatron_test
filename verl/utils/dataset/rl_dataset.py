@@ -343,8 +343,14 @@ class RLHFDataset(Dataset):
                     )
                 ]  # (1, 3, seq_len)
             else:
-                position_ids = compute_position_id_with_mask(attention_mask)
-
+                # pure text
+                position_ids = [
+                    get_rope_index(
+                        self.processor,
+                        input_ids=input_ids[0],
+                        attention_mask=attention_mask[0],
+                    )
+                ]
         else:
             position_ids = compute_position_id_with_mask(attention_mask)
 
