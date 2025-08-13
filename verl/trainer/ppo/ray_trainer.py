@@ -60,7 +60,8 @@ from verl.utils.metric import (
 from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
 from verl.utils.torch_functional import masked_mean
 from verl.utils.tracking import ValidationGenerationsLogger
-
+import torch.distributed as dist
+from verl.utils.precheck_embed import stash_expected_windows_to_meta
 WorkerType = type[Worker]
 
 
@@ -1134,6 +1135,9 @@ class RayPPOTrainer:
 
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
 
+                if self.config.data.get("precheck_mismatch", False):
+                    stash_expected_windows_to_meta(batch, divisor=4)
+
                 # pop those keys for generation
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
                 non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
@@ -1222,7 +1226,21 @@ class RayPPOTrainer:
 
                     # recompute old_log_probs
                     with marked_timer("old_log_prob", timing_raw, color="blue"):
+                        precheck_mismatch = self.config.data.get("precheck_mismatch", False)
+                        batch.meta_info["precheck_mismatch"] = precheck_mismatch
                         old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                        if precheck_mismatch:
+                            if bool(old_log_prob.meta_info.get("skip", False)):
+                                is_master = (not dist.is_available()) or (not dist.is_initialized()) or (dist.get_rank() == 0)
+                                if is_master:
+                                    reason = old_log_prob.meta_info.get("skip_reason", "")
+                                    detail = old_log_prob.meta_info.get("skip_detail", {})
+                                    print(f"[SKIP-PRECHECK][step={self.global_steps}] {reason} | detail={detail}")
+                                # do not union/compute anything; just advance progress and continue
+                                progress_bar.update(1)
+                                self.global_steps += 1
+                                continue
+
                         entropys = old_log_prob.batch["entropys"]
                         response_masks = batch.batch["response_mask"]
                         loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode

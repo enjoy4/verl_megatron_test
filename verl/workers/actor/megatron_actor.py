@@ -48,6 +48,7 @@ from verl.utils.py_functional import append_to_dict
 from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import broadcast_dict_tensor
 from verl.workers.actor import BasePPOActor
+from verl.utils.precheck_embed import mm_precheck_and_sync
 
 __all__ = ["MegatronPPOActor"]
 
@@ -207,6 +208,18 @@ class MegatronPPOActor(BasePPOActor):
             response = batch["responses"]
             response_length = response.size(1)
             with torch.no_grad():
+                precheck_mismatch = bool(getattr(data, "meta_info", {}).get("precheck_mismatch", False))
+                if precheck_mismatch:
+                    skip, reason, detail = mm_precheck_and_sync(data, self.actor_module)
+                    if skip:
+                        self._skip_current_batch = True            # bool
+                        self._skip_reason = reason                 # str
+                        self._skip_detail = detail                 # dict (optional)
+                        dev = data.batch["input_ids"].device
+                        log_probs = torch.empty((0, 0), dtype=torch.float32, device=dev)
+                        entropys  = torch.empty((0, 0), dtype=torch.float32, device=dev)
+                        return log_probs, entropys
+
                 output = self.forward_backward_batch(
                     data,
                     forward_only=True,
