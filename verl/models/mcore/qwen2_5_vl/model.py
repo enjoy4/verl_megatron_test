@@ -30,7 +30,6 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from .attention import Qwen2_5VLSelfAttention
 from .vision_model import Qwen2_5VisionModel
 
-
 # Note: This is under development and may be missing features.
 class Qwen2_5VLModel(MegatronModule):
     """Qwen2.5VL multi-modal model.
@@ -190,6 +189,43 @@ class Qwen2_5VLModel(MegatronModule):
             for param in module.parameters():
                 param.requires_grad = False
 
+    def _vision_span_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
+        VISION_START_ID = 151652  # <|vision_start|>
+        VISION_END_ID   = 151653  # <|vision_end|>
+        if input_ids.dim() == 1:
+            ids = input_ids
+            L = ids.size(0)
+            m = torch.zeros(L, dtype=torch.bool, device=ids.device)
+            in_span = False
+            for i in range(L):
+                tok = ids[i].item()
+                if tok == VISION_START_ID:
+                    in_span = True
+                    continue
+                if tok == VISION_END_ID:
+                    in_span = False
+                    continue
+                if in_span:
+                    m[i] = True
+            return m
+        else:
+            B, L = input_ids.shape
+            m = torch.zeros(B, L, dtype=torch.bool, device=input_ids.device)
+            for b in range(B):
+                ids = input_ids[b]
+                in_span = False
+                for i in range(L):
+                    tok = ids[i].item()
+                    if tok == VISION_START_ID:
+                        in_span = True
+                        continue
+                    if tok == VISION_END_ID:
+                        in_span = False
+                        continue
+                    if in_span:
+                        m[b, i] = True
+        return m
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -227,14 +263,16 @@ class Qwen2_5VLModel(MegatronModule):
         video_start_index = 0
         vision_grid_thw = None
         vision_data = None
+        vision_span = self._vision_span_mask(input_ids)
+
         if image_grid_thw is not None:
-            image_mask = input_ids == self.image_token_id
+            image_mask = (input_ids == self.image_token_id) & vision_span
             vision_grid_thw = image_grid_thw
             vision_data = pixel_values
             video_start_index = image_mask.sum().item()
 
         if video_grid_thw is not None:
-            video_mask = input_ids == self.video_token_id
+            video_mask = (input_ids == self.video_token_id) & vision_span
             
             if image_grid_thw is not None:
                 vision_grid_thw = torch.cat([vision_grid_thw, video_grid_thw], dim=0)
@@ -301,14 +339,14 @@ class Qwen2_5VLModel(MegatronModule):
                 if image_embeds is not None or video_embeds is not None:
                     combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
                     if image_embeds is not None:
-                        image_mask = (input_ids == self.image_token_id).contiguous()
+                        image_mask = ((input_ids == self.image_token_id) & vision_span).contiguous()
                         if image_mask.sum() > 0:
                             combined_embeddings = combined_embeddings.clone()
                             combined_embeddings[image_mask] = image_embeds.to(
                                 dtype=combined_embeddings.dtype, device=combined_embeddings.device
                             )
                     if video_embeds is not None:
-                        video_mask = (input_ids == self.video_token_id).contiguous()
+                        video_mask = ((input_ids == self.video_token_id) & vision_span).contiguous()
                         if video_mask.sum() > 0:
                             combined_embeddings = combined_embeddings.clone()
                             combined_embeddings[video_mask] = video_embeds.to(
