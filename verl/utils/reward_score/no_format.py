@@ -57,6 +57,10 @@ def last_boxed_only_string(string: str) -> str:
         return boxed_expr if match else None
 
 def format_reward(predict_str: str) -> float:
+    # pattern = re.compile(r"<think>.*</think>.*\\boxed\{.*\}.*", re.DOTALL)
+    # pattern = re.compile(r".*\\boxed\{.*\}.*", re.DOTALL)
+    # match_result = re.fullmatch(pattern, predict_str)
+    # return 1.0 if match_result else 0.0
 
     predict_str = predict_str.lower()
     boxed = last_boxed_only_string(predict_str)
@@ -92,6 +96,8 @@ def last_boxed_only_string_acc(string: str) -> str:
         return retval
 
 def acc_reward(predict_str: str, ground_truth: str) -> float:
+    # answer = extract_boxed_content(predict_str)
+    # return 1.0 if grade_answer(answer, ground_truth) else 0.0
     boxed_answer = last_boxed_only_string_acc(predict_str)
     if boxed_answer:
         try:
@@ -106,25 +112,13 @@ def acc_reward(predict_str: str, ground_truth: str) -> float:
         boxed_answer = None
     
     ground_truth = ground_truth.strip()
-    ground_truth = ground_truth.upper()
     reward = 1.0 if boxed_answer == ground_truth else 0.0
     return reward
 
 
 def compute_score(predict_str: str, ground_truth: str) -> float:
-    return 0.9 * acc_reward(predict_str, ground_truth) + 0.1 * format_reward(predict_str)
-
-def compute_score_format73(predict_str: str, ground_truth: str) -> float:
-    return 0.7 * acc_reward(predict_str, ground_truth) + 0.3 * format_reward(predict_str)
+    # return 0.9 * acc_reward(predict_str, ground_truth) + 0.1 * format_reward(predict_str)
+    return acc_reward(predict_str, ground_truth)
 
 def compute_score_formatE(predict_str: str, ground_truth: str) -> float:
     return 0.5 * acc_reward(predict_str, ground_truth) + 0.5 * format_reward(predict_str)
-
-def compute_score_format91(predict_str: str, ground_truth: str) -> float:
-    return 0.9 * acc_reward(predict_str, ground_truth) + 0.1 * format_reward(predict_str)
-
-def compute_score_no_format(predict_str: str, ground_truth: str) -> float:
-    return {
-        "acc": acc_reward(predict_str, ground_truth),
-        "score": acc_reward(predict_str, ground_truth)
-    }
