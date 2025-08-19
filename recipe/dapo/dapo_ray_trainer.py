@@ -92,7 +92,10 @@ class RayDAPOTrainer(RayPPOTrainer):
         batch = None
         num_prompt_in_batch = 0
         num_gen_batches = 0
+        num_solve_all = 0
+        num_solve_none = 0
         for epoch in range(self.config.trainer.total_epochs):
+            total_cnt = 0 
             for batch_dict in self.train_dataloader:
                 metrics = {}
 
@@ -227,6 +230,8 @@ class RayDAPOTrainer(RayPPOTrainer):
                             for uid, std in prompt_uid2metric_std.items()
                             if std > 0 or len(prompt_uid2metric_vals[uid]) == 1
                         ]
+                        num_solve_all += len([uid for uid, std in prompt_uid2metric_std.items() if std == 0 and len(prompt_uid2metric_vals[uid]) > 1 and prompt_uid2metric_vals[uid][0] == 1])
+                        num_solve_none += len([uid for uid, std in prompt_uid2metric_std.items() if std == 0 and len(prompt_uid2metric_vals[uid]) > 1 and prompt_uid2metric_vals[uid][0] == 0])
                         num_prompt_in_batch += len(kept_prompt_uids)
 
                         kept_traj_idxs = []
@@ -277,11 +282,46 @@ class RayDAPOTrainer(RayPPOTrainer):
                         entropys = old_log_prob.batch["entropys"]
                         response_masks = batch.batch["response_mask"]
                         loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
-                        entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
-                        old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
+                        entropy_loss = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+                        # Cheliu:Adding seq-mean-token-mean entropy in there, 
+                        # to log seq level entropy (mean,std,...)
+                        # current agg_loss does not support std return
+                        # Check individual sequence-level entropy for a few samples
+                        seq_entropy = (entropys * response_masks.to(entropys.dtype)).sum(dim=1) / (response_masks.sum(dim=1) + 1e-8)
+
+                        old_log_prob_metrics = {
+                            "actor/entropy_loss": entropy_loss.detach().item(),
+                            "actor/entropy_seq_mean": seq_entropy.mean().item(),
+                            "actor/entropy_seq_std": seq_entropy.std().item(),
+                            "actor/entropy_seq_max": seq_entropy.max().item(),
+                            "actor/entropy_seq_min": seq_entropy.min().item(),
+                            }
                         metrics.update(old_log_prob_metrics)
                         old_log_prob.batch.pop("entropys")
                         batch = batch.union(old_log_prob)
+                        if "rollout_log_probs" in batch.batch.keys():
+                            # TODO: we may want to add diff of probs too.
+                            rollout_old_log_probs = batch.batch["rollout_log_probs"]
+                            actor_old_log_probs = batch.batch["old_log_probs"]
+                            attention_mask = batch.batch["attention_mask"]
+                            responses = batch.batch["responses"]
+                            response_length = responses.size(1)
+                            response_mask = attention_mask[:, -response_length:]
+
+                            rollout_probs = torch.exp(rollout_old_log_probs)
+                            actor_probs = torch.exp(actor_old_log_probs)
+                            rollout_probs_diff = torch.abs(rollout_probs - actor_probs)
+                            rollout_probs_diff = torch.masked_select(rollout_probs_diff, response_mask.bool())
+                            rollout_probs_diff_max = torch.max(rollout_probs_diff)
+                            rollout_probs_diff_mean = torch.mean(rollout_probs_diff)
+                            rollout_probs_diff_std = torch.std(rollout_probs_diff)
+                            metrics.update(
+                                {
+                                    "training/rollout_probs_diff_max": rollout_probs_diff_max.detach().item(),
+                                    "training/rollout_probs_diff_mean": rollout_probs_diff_mean.detach().item(),
+                                    "training/rollout_probs_diff_std": rollout_probs_diff_std.detach().item(),
+                                }
+                            )
 
                     if self.use_reference_policy:
                         # compute reference log_prob
@@ -306,7 +346,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                             num_repeat=self.config.actor_rollout_ref.rollout.n,
                             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                         )
-
+                    
                     # update critic
                     if self.use_critic:
                         with marked_timer("update_critic", timing_raw, "pink"):
@@ -321,6 +361,22 @@ class RayDAPOTrainer(RayPPOTrainer):
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
+
+                    # Log rollout generations if enabled
+                    rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
+                    if rollout_data_dir:
+                        with _timer("dump_rollout_generations", timing_raw):
+                            print(batch.batch.keys())
+                            inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
+                            outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
+                            scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
+                            self._dump_generations(
+                                inputs=inputs,
+                                outputs=outputs,
+                                scores=scores,
+                                reward_extra_infos_dict=reward_extra_infos_dict,
+                                dump_path=rollout_data_dir,
+                            )
 
                     # validate
                     if (
@@ -339,7 +395,14 @@ class RayDAPOTrainer(RayPPOTrainer):
                     ):
                         with marked_timer("save_checkpoint", timing_raw, "green"):
                             self._save_checkpoint()
-
+                 
+                 # training metrics
+                metrics.update(
+                    {
+                        "training/global_step": self.global_steps,
+                        "training/epoch": epoch,
+                    }
+                )
                 with marked_timer("stop_profile", timing_raw):
                     if do_profile:
                         self.actor_rollout_wg.stop_profile()
@@ -358,10 +421,15 @@ class RayDAPOTrainer(RayPPOTrainer):
                 metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
                 timing_raw = defaultdict(float)  # clear timing
 
-                metrics["train/num_gen_batches"] = num_gen_batches
+                metrics["batch/num_gen_batches"] = num_gen_batches
+                metrics["batch/solve_all"] = num_solve_all/(num_gen_batches*self.config.data.train_batch_size)
+                metrics["batch/solve_none"] = num_solve_none/(num_gen_batches*self.config.data.train_batch_size)
+                metrics['batch/total_cnt'] = total_cnt
                 batch = None
                 num_prompt_in_batch = 0
                 num_gen_batches = 0
+                num_solve_all = 0
+                num_solve_none = 0
 
                 # TODO: make a canonical logger that supports various backend
                 logger.log(data=metrics, step=self.global_steps)

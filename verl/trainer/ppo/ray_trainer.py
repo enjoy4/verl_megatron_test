@@ -608,6 +608,12 @@ class RayPPOTrainer:
             f"Size of train dataloader: {len(self.train_dataloader)}, Size of val dataloader: "
             f"{len(self.val_dataloader)}"
         )
+        for test_data in self.val_dataloader:
+            for key, value in test_data.items():
+                if isinstance(value, torch.Tensor):
+                    print(f"{key}: shape={value.shape}")
+                else:
+                    print(f"{key}: len={len(value)}")
 
         total_training_steps = len(self.train_dataloader) * self.config.trainer.total_epochs
 
@@ -1245,7 +1251,19 @@ class RayPPOTrainer:
                         response_masks = batch.batch["response_mask"]
                         loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
                         entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
-                        old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
+                        # Cheliu:Adding seq-mean-token-mean entropy in there, 
+                        # to log seq level entropy (mean,std,...)
+                        # current agg_loss does not support std return
+                        # Check individual sequence-level entropy for a few samples
+                        seq_entropy = (entropys * response_masks.to(entropys.dtype)).sum(dim=1) / (response_masks.sum(dim=1) + 1e-8)
+
+                        old_log_prob_metrics = {
+                            "actor/entropy_loss": entropy_loss.detach().item(),
+                            "actor/entropy_seq_mean": seq_entropy.mean().item(),
+                            "actor/entropy_seq_std": seq_entropy.std().item(),
+                            "actor/entropy_seq_max": seq_entropy.max().item(),
+                            "actor/entropy_seq_min": seq_entropy.min().item(),
+                            }
                         metrics.update(old_log_prob_metrics)
                         old_log_prob.batch.pop("entropys")
                         batch = batch.union(old_log_prob)
@@ -1323,7 +1341,32 @@ class RayPPOTrainer:
                             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                             config=self.config.algorithm,
                         )
+                        #for batch metric
+                        uids = batch.non_tensor_batch['uid']
+                        unique_uids = np.unique(uids)
+                        valid_mask = torch.ones(len(uids), dtype=torch.bool)
+                        solve_none = 0
+                        solve_all = 0
+                        for uid in unique_uids:
+                            uid_mask = uids == uid
+                            uid_rewards = reward_tensor[uid_mask].sum(-1)  # Sum rewards for each sequence
+                            
+                            # Check if all rewards are 0 or all are 1 for this uid
+                            if (uid_rewards == 0).all():
+                                valid_mask[uid_mask] = False
+                                solve_none += 1
+                            elif (uid_rewards == 1).all():
+                                valid_mask[uid_mask] = False
+                                solve_all += 1
 
+                                                
+                        # Log to metrics
+                        # import ipdb
+                        # ipdb.set_trace()
+                        metrics['batch/solve_none'] = solve_none/len(unique_uids)
+                        metrics['batch/solve_all'] = solve_all/len(unique_uids)
+                        metrics['batch/adv_nonzero_rate'] = 1.0 - (solve_all+solve_none)/len(unique_uids)
+                        metrics['batch/total_cnt'] = total_cnt
                     # update critic
                     if self.use_critic:
                         with marked_timer("update_critic", timing_raw, color="pink"):
