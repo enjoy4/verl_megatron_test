@@ -608,12 +608,6 @@ class RayPPOTrainer:
             f"Size of train dataloader: {len(self.train_dataloader)}, Size of val dataloader: "
             f"{len(self.val_dataloader)}"
         )
-        for test_data in self.val_dataloader:
-            for key, value in test_data.items():
-                if isinstance(value, torch.Tensor):
-                    print(f"{key}: shape={value.shape}")
-                else:
-                    print(f"{key}: len={len(value)}")
 
         total_training_steps = len(self.train_dataloader) * self.config.trainer.total_epochs
 
@@ -685,6 +679,7 @@ class RayPPOTrainer:
         self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
 
     def _validate(self):
+        reward_tensor_lst = []
         data_source_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 
@@ -781,6 +776,7 @@ class RayPPOTrainer:
             if "__num_turns__" in test_batch.non_tensor_batch:
                 sample_turns.append(test_batch.non_tensor_batch["__num_turns__"])
 
+            reward_tensor_lst.append(reward_tensor)
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
 
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
@@ -799,10 +795,41 @@ class RayPPOTrainer:
         for key_info, lst in reward_extra_infos_dict.items():
             assert len(lst) == 0 or len(lst) == len(sample_scores), f"{key_info}: {len(lst)=}, {len(sample_scores)=}"
 
+        reward_tensor = torch.cat(reward_tensor_lst, dim=0).sum(-1).cpu()  # (batch_size,)   
         data_sources = np.concatenate(data_source_lst, axis=0)
+
+        # evaluate test_score based on data source
+        data_source_reward = {}
+        for i in range(reward_tensor.shape[0]):
+            data_source = data_sources[i]
+            if data_source not in data_source_reward:
+                data_source_reward[data_source] = []
+            data_source_reward[data_source].append(reward_tensor[i].item())
 
         data_src2var2metric2val = process_validation_metrics(data_sources, sample_inputs, reward_extra_infos_dict)
         metric_dict = {}
+
+        for data_source, rewards in data_source_reward.items():
+            metric_dict[f'val/test_score/{data_source}'] = np.mean(rewards)
+        
+        # added part, for avg all
+        all_rewards = []
+        for data_source, rewards in data_source_reward.items():
+            all_rewards.extend(rewards)
+
+        if len(all_rewards) > 0:
+            metric_dict['val/test_score/overall_sample_wise'] = np.mean(all_rewards)
+    
+
+        # 计算 overall（按 data_source 平均再平均） -> macro avg
+        datasource_means = []
+        for data_source, rewards in data_source_reward.items():
+            # if 'MedXpert' not in data_source:
+            datasource_means.append(np.mean(rewards))
+
+        if len(datasource_means) > 0:
+            metric_dict['val/test_score/overall_source_wise'] = np.mean(datasource_means)
+
         for data_source, var2metric2val in data_src2var2metric2val.items():
             core_var = "acc" if "acc" in var2metric2val else "reward"
             for var_name, metric2val in var2metric2val.items():
@@ -1127,6 +1154,7 @@ class RayPPOTrainer:
         self.max_steps_duration = 0
 
         for epoch in range(self.config.trainer.total_epochs):
+            total_cnt = 0 
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
@@ -1174,6 +1202,7 @@ class RayPPOTrainer:
                 with marked_timer("step", timing_raw):
                     # generate a batch
                     with marked_timer("gen", timing_raw, color="red"):
+                        total_cnt += len(batch.batch)
                         if not self.async_rollout_mode:
                             gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
                         else:
@@ -1258,7 +1287,7 @@ class RayPPOTrainer:
                         seq_entropy = (entropys * response_masks.to(entropys.dtype)).sum(dim=1) / (response_masks.sum(dim=1) + 1e-8)
 
                         old_log_prob_metrics = {
-                            "actor/entropy_loss": entropy_loss.detach().item(),
+                            "actor/entropy_loss": entropy_agg.detach().item(),
                             "actor/entropy_seq_mean": seq_entropy.mean().item(),
                             "actor/entropy_seq_std": seq_entropy.std().item(),
                             "actor/entropy_seq_max": seq_entropy.max().item(),

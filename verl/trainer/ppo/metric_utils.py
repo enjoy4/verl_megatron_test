@@ -127,6 +127,20 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> dict[str,
         return_diff_var = torch.var(valid_returns - valid_values)
         return_var = torch.var(valid_returns)
 
+    # compute the raio of reward >= 0.1 (indicate format correct)
+    num_over01 = (sequence_score > 0.1).sum().item()
+    total_samples = sequence_score.numel()
+    ratio_over01 = num_over01 / total_samples
+
+    # compute the raio of differ adv set
+    num_total = valid_adv.numel()
+    num_pos = (valid_adv > 0).sum().item()
+    num_neg = (valid_adv < 0).sum().item()
+    num_zero = (valid_adv == 0).sum().item()
+    
+    pos_adv = valid_adv[valid_adv > 0]
+    neg_adv = valid_adv[valid_adv < 0]
+
     metrics = {
             # score
             "critic/score/mean": torch.mean(sequence_score).detach().item(),
