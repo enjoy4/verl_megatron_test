@@ -90,10 +90,10 @@ def default_compute_score(
 
         res = geo3k.compute_score(solution_str, ground_truth)
 
-    elif data_source in ["egolife","cosmos", "scannet_mcq", "vsibench_mcq","phyx"]:
+    elif data_source in ["egolife","cosmos", "scannet_mcq", "vsibench_mcq", "phyx"]:
         from . import egolife
 
-        res = egolife.compute_score_no_format(solution_str, ground_truth)
+        res = egolife.compute_score_format91(solution_str, ground_truth)
     elif data_source in ["scannet_qa","vsibench_qa"]:
         from . import scannet_qa
 
@@ -102,7 +102,7 @@ def default_compute_score(
         # from . import robopoint
         from . import robopoint_gaussian
 
-        res = robopoint_gaussian_fix.compute_score_format91(solution_str, ground_truth)
+        res = robopoint_gaussian.compute_score_format91(solution_str, ground_truth)
     elif data_source in ["egolife_geoR"]:
         from . import egolife
 

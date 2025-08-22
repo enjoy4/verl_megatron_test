@@ -166,42 +166,6 @@ def compute_score(predict_str: str, ground_truth: str) -> float:
     
     return 0.2*format_reward_1 + 0.3*format_reward_2 + 0.5*acc_reward
 
-<<<<<<< HEAD
-
-if __name__ == "__main__":
-    test_predict_wrong_format = """
-    <think>
-    哈基米
-    </think>
-    <answer>
-    (0.7, 0.2), (0.75, 0.25), (0.72, 0.18)
-    </answer>
-    """
-    
-    test_predict_correct_format = """
-    <think>
-    哈基米
-    </think>
-    <answer>
-    [(0.65, 0.4), (0.7, 0.35), (0.68, 0.5)]
-    </answer>
-    """
-    test_ground_truth = "[(0.523, 0.517), (0.631, 0.517), (0.631, 0.542), (0.523, 0.542)]"
-    
-    print("--- 案例1: 格式不正确 (缺少方括号) ---")
-    print(f"Format reward 1 (think/answer): {format_reward_think_answer(test_predict_wrong_format)}")
-    print(f"Format reward 2 (coordinates format): {format_reward_coordinates(test_predict_wrong_format)}")
-    print(f"Accuracy reward: {accuracy_reward(test_predict_wrong_format, test_ground_truth)}")
-    print(f"Overall score: {compute_score(test_predict_wrong_format, test_ground_truth)}")
-    
-    print("\n" + "="*40 + "\n")
-    
-    print("--- 案例2: 格式正确 (包含方括号) ---")
-    print(f"Format reward 1 (think/answer): {format_reward_think_answer(test_predict_correct_format)}")
-    print(f"Format reward 2 (coordinates format): {format_reward_coordinates(test_predict_correct_format)}")
-    print(f"Accuracy reward: {accuracy_reward(test_predict_correct_format, test_ground_truth)}")
-    print(f"Overall score: {compute_score(test_predict_correct_format, test_ground_truth)}")
-=======
 def compute_score_no_format(predict_str: str, ground_truth: str) -> float:
     return accuracy_reward(predict_str, ground_truth)
 
@@ -367,4 +331,3 @@ class TestCoordinateFunctions(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
->>>>>>> 990beb9 (add reward function)
