@@ -24,17 +24,38 @@ def format_reward_coordinates(predict_str: str) -> float:
     
     return 1.0 if match_result else 0.0
 
-
-def extract_coordinates_from_answer(predict_str: str) -> List[Tuple[float, float]]:
-    """从预测字符串中提取坐标点"""
+def extract_coordinates_from_answer(predict_str):
     try:
-        if predict_str.strip().startswith("[(") and predict_str.strip().endswith(")]"):
-            return ast.literal_eval(predict_str)
-        else:
-            coord_pattern = re.compile(r"\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)")
-            matches = coord_pattern.findall(predict_str)
-            return [(float(x), float(y)) for x, y in matches]
-    except (ValueError, SyntaxError):
+        # 提取所有<answer>标签内容（取最后一个）
+        answer_matches = re.findall(r'<answer>(.*?)</answer>', predict_str, re.DOTALL)
+        if not answer_matches:
+            return []
+        
+        answer_content = answer_matches[-1].strip()
+        coord_pattern = re.compile(r"\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)")
+        matches = coord_pattern.findall(answer_content)
+        
+        # 类型转换和预处理
+        processed = []
+        for x_str, y_str in matches:
+            try:
+                x = round(float(x_str), 4)
+                y = round(float(y_str), 4)
+                processed.append((x, y))
+            except ValueError:
+                continue
+        
+        # 去重和范围校验
+        seen = set()
+        valid_coords = []
+        for coord in processed:
+            if (coord not in seen and 
+                all(0 <= val <= 1 for val in coord)):
+                seen.add(coord)
+                valid_coords.append(coord)
+        
+        return valid_coords
+    except Exception:
         return []
 
 def parse_gt_box(ground_truth: str) -> List[Tuple[float, float]]:
@@ -145,37 +166,168 @@ def compute_score(predict_str: str, ground_truth: str) -> float:
     
     return 0.2*format_reward_1 + 0.3*format_reward_2 + 0.5*acc_reward
 
+def compute_score_no_format(predict_str: str, ground_truth: str) -> float:
+    return accuracy_reward(predict_str, ground_truth)
 
-if __name__ == "__main__":
-    test_predict_wrong_format = """
-    <think>
-    哈基米
-    </think>
-    <answer>
-    (0.7, 0.2), (0.75, 0.25), (0.72, 0.18)
-    </answer>
-    """
+def compute_score_format91(predict_str: str, ground_truth: str) -> float:
+    format_reward_1 = format_reward_think_answer(predict_str)
+    format_reward_2 = format_reward_coordinates(predict_str)
+    acc_reward = accuracy_reward(predict_str, ground_truth)
     
-    test_predict_correct_format = """
-    <think>
-    哈基米
-    </think>
-    <answer>
-    [(0.65, 0.4), (0.7, 0.35), (0.68, 0.5)]
-    </answer>
-    """
-    test_ground_truth = "[(0.523, 0.517), (0.631, 0.517), (0.631, 0.542), (0.523, 0.542)]"
+    return 0.1*format_reward_1 + 0.1*format_reward_2 + 0.8*acc_reward
+
+import unittest
+
+class TestCoordinateFunctions(unittest.TestCase):
+    # 基础格式验证测试
+    def test_format_reward_think_answer(self):
+        # 完整正确格式
+        correct_format = "<think>内容</think><answer>[(0.1,0.2)]</answer>"
+        self.assertEqual(format_reward_think_answer(correct_format), 1.0)
+        
+        # 缺少think标签
+        missing_think = "<answer>[(0.1,0.2)]</answer>"
+        self.assertEqual(format_reward_think_answer(missing_think), 0.0)
     
-    print("--- 案例1: 格式不正确 (缺少方括号) ---")
-    print(f"Format reward 1 (think/answer): {format_reward_think_answer(test_predict_wrong_format)}")
-    print(f"Format reward 2 (coordinates format): {format_reward_coordinates(test_predict_wrong_format)}")
-    print(f"Accuracy reward: {accuracy_reward(test_predict_wrong_format, test_ground_truth)}")
-    print(f"Overall score: {compute_score(test_predict_wrong_format, test_ground_truth)}")
+    # 坐标提取安全测试（增强版）
+    def test_extract_coordinates_security(self):
+        # 测试用例1：坐标在answer外部不应被提取
+        external_coords = """
+        <think>思考</think>
+        (0.9,0.9)  # 外部坐标
+        <answer>[(0.1,0.2)]</answer>
+        (0.8,0.8)  # 外部坐标
+        """
+        self.assertEqual(extract_coordinates_from_answer(external_coords), [(0.1, 0.2)])
+        
+        # 测试用例2：嵌套标签应该提取最后一个有效answer内容
+        nested_tags = """
+        <think>
+        <answer>[(9.9,9.9)]</answer>  # 假坐标
+        </think>
+        <answer>[(0.1,0.2)]</answer>  # 真坐标
+        """
+        self.assertEqual(extract_coordinates_from_answer(nested_tags), [(0.1, 0.2)])
+        
+        # 测试用例3：多answer标签应该取最后一个
+        multi_answers = """
+        <answer>[(0.3,0.4)]</answer>
+        <answer>[(0.1,0.2)]</answer>
+        """
+        self.assertEqual(extract_coordinates_from_answer(multi_answers), [(0.1, 0.2)])
+        
+        # 测试用例4：混合内容中的坐标提取
+        mixed_content = """
+        <answer>
+        这是文本内容 [(0.1,0.2), (0.3,0.4)]
+        更多文本 (0.5,0.6)
+        </answer>
+        """
+        self.assertCountEqual(
+            extract_coordinates_from_answer(mixed_content),
+            [(0.1, 0.2), (0.3, 0.4), (0.5, 0.6)]
+        )
     
-    print("\n" + "="*40 + "\n")
+    def test_strict_coordinate_format(self):
+        # 测试用例1：缺少方括号的情况
+        no_brackets = "<answer>(0.1,0.2),(0.3,0.4)</answer>"
+        self.assertEqual(format_reward_coordinates(no_brackets), 0.0)
+        
+        # 测试用例2：带空格的标准格式
+        with_spaces = "<answer> [ ( 0.1 , 0.2 ) ] </answer>"
+        self.assertEqual(format_reward_coordinates(with_spaces), 1.0)
+        
+        # 测试用例3：不完整坐标对
+        incomplete_pair = "<answer>[(0.1,0.2), (0.3)]</answer>"
+        self.assertEqual(format_reward_coordinates(incomplete_pair), 0.0)
     
-    print("--- 案例2: 格式正确 (包含方括号) ---")
-    print(f"Format reward 1 (think/answer): {format_reward_think_answer(test_predict_correct_format)}")
-    print(f"Format reward 2 (coordinates format): {format_reward_coordinates(test_predict_correct_format)}")
-    print(f"Accuracy reward: {accuracy_reward(test_predict_correct_format, test_ground_truth)}")
-    print(f"Overall score: {compute_score(test_predict_correct_format, test_ground_truth)}")
+    def test_gt_box_parsing(self):
+        # 不完整GT框
+        incomplete_gt = "[(0.1,0.2),(0.3,0.4)]"  # 只有2个点
+        parsed = parse_gt_box(incomplete_gt)
+        self.assertEqual(len(parsed), 2)
+        
+        # 非法字符串格式
+        invalid_gt = "不是坐标格式"
+        self.assertEqual(parse_gt_box(invalid_gt), [])
+    
+    def test_gaussian_edge_cases(self):
+        # 完全匹配中心点
+        center = (0.5, 0.5)
+        variance = (0.1, 0.1)
+        self.assertAlmostEqual(gaussian_point_reward(center, center, variance), 1.0)
+        
+        # 完全超出范围的点
+        far_point = (10.0, 10.0)
+        self.assertAlmostEqual(gaussian_point_reward(far_point, center, variance), 0.0)
+    
+    def test_coordinate_deduplication(self):
+        # 测试用例1：完全相同的坐标
+        test_str1 = """
+        <answer>
+        [(0.1, 0.2), (0.1, 0.2), 
+        (0.1, 0.2), (0.3, 0.4)]
+        </answer>
+        """
+        self.assertCountEqual(
+            extract_coordinates_from_answer(test_str1),
+            [(0.1, 0.2), (0.3, 0.4)]
+        )
+        
+        # 测试用例2：精度差异的坐标
+        test_str2 = """
+        <answer>
+        [(0.100001, 0.200001), 
+        (0.1000, 0.2000),
+        (0.1, 0.2)]
+        </answer>
+        """
+        result = extract_coordinates_from_answer(test_str2)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], (0.1, 0.2))
+        
+        # 测试用例3：混合格式重复
+        test_str3 = """
+        <answer>
+        [(0.1, 0.2), (0.3, 0.4)]
+        (0.1, 0.2)  # 重复坐标
+        (0.3, 0.4)  # 重复坐标
+        (0.5, 0.6)  # 新坐标
+        </answer>
+        """
+        self.assertCountEqual(
+            extract_coordinates_from_answer(test_str3),
+            [(0.1, 0.2), (0.3, 0.4), (0.5, 0.6)]
+        )
+    
+    def test_edge_cases(self):
+        # 测试用例1：空内容
+        self.assertEqual(extract_coordinates_from_answer(""), [])
+        self.assertEqual(extract_coordinates_from_answer("<answer></answer>"), [])
+        
+        # 测试用例2：超出范围的坐标
+        test_str = """
+        <answer>
+        [(1.1, 0.5),  # x超出
+        (0.5, -0.1),  # y超出
+        (0.5, 0.5),   # 有效
+        (0.5, 1.0)]   # 边界有效
+        </answer>
+        """
+        self.assertEqual(
+            extract_coordinates_from_answer(test_str),
+            [(0.5, 0.5), (0.5, 1.0)]
+        )
+        
+        # 测试用例3：不同精度的坐标
+        test_str = """
+        <answer>
+        [(0.1234, 0.5678), 
+        (0.12345, 0.56785)]  # 小数点后5位
+        </answer>
+        """
+        self.assertEqual(len(extract_coordinates_from_answer(test_str)), 2)
+
+
+if __name__ == '__main__':
+    unittest.main()
