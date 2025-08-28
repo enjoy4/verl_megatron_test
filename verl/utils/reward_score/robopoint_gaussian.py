@@ -174,7 +174,10 @@ def compute_score_format91(predict_str: str, ground_truth: str) -> float:
     format_reward_2 = format_reward_coordinates(predict_str)
     acc_reward = accuracy_reward(predict_str, ground_truth)
     
-    return 0.1*format_reward_1 + 0.1*format_reward_2 + 0.8*acc_reward
+    return {
+        "acc": acc_reward,
+        "score": 0.1*format_reward_1 + 0.1*format_reward_2 + 0.8*acc_reward
+    }
 
 import unittest
 
