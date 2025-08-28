@@ -133,12 +133,11 @@ class MegatronPPOCritic(BasePPOCritic):
             values = values.contiguous()
 
             # sync among pp ranks
-            with torch.no_grad():
-                torch.distributed.broadcast(
-                    tensor=values,
-                    src=mpu.get_pipeline_model_parallel_last_rank(),
-                    group=mpu.get_pipeline_model_parallel_group(),
-                )
+            torch.distributed.broadcast(
+                tensor=values,
+                src=mpu.get_pipeline_model_parallel_last_rank(),
+                group=mpu.get_pipeline_model_parallel_group(),
+            )
 
         # add empty cache after each compute
         get_torch_device().empty_cache()

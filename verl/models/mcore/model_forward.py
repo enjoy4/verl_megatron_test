@@ -93,54 +93,24 @@ def gptmodel_forward_qwen2_5_vl(
     assert mpu.get_context_parallel_world_size() == 1, "qwen2_5_vl's context parallel is not accurate yet"
     pre_process = unwrap_model(model).pre_process
     post_process = unwrap_model(model).post_process
-    print("joy reward:", multi_modal_inputs.keys())
-
-    if "pixel_values" in multi_modal_inputs.keys():
-        pixel_values = (
-            multi_modal_inputs["pixel_values"].to(input_ids.device) if "pixel_values" in multi_modal_inputs else None
-        )
-        image_grid_thw = (
-            multi_modal_inputs["image_grid_thw"].to(input_ids.device) if "image_grid_thw" in multi_modal_inputs else None
-        )
-    elif "pixel_values_videos" in multi_modal_inputs.keys():
-        pixel_values_videos = (
-            multi_modal_inputs["pixel_values_videos"].to(input_ids.device) if "pixel_values_videos" in multi_modal_inputs else None
-        )
-        video_grid_thw = (
-            multi_modal_inputs["video_grid_thw"].to(input_ids.device) if "video_grid_thw" in multi_modal_inputs else None
-        )
+    pixel_values = (
+        multi_modal_inputs["pixel_values"].to(input_ids.device) if "pixel_values" in multi_modal_inputs else None
+    )
+    image_grid_thw = (
+        multi_modal_inputs["image_grid_thw"].to(input_ids.device) if "image_grid_thw" in multi_modal_inputs else None
+    )
     if pack_seqs:
         batch_size, seq_len = attention_mask.shape[:2]
         input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(input_ids, attention_mask, pre_process=True)
         input_ids_rmpad = input_ids_rmpad.contiguous()
-        if "pixel_values" in multi_modal_inputs.keys():
-            output_orig = model(
-                input_ids=input_ids_rmpad,
-                attention_mask=None,
-                position_ids=position_ids,
-                packed_seq_params=packed_seq_params,
-                pixel_values=pixel_values,
-                image_grid_thw=image_grid_thw,
-            )
-
-        elif "pixel_values_videos" in multi_modal_inputs.keys():
-            output_orig = model(
-                input_ids=input_ids_rmpad,
-                attention_mask=None,
-                position_ids=position_ids,
-                packed_seq_params=packed_seq_params,
-                pixel_values_videos=pixel_values_videos,
-                video_grid_thw=video_grid_thw,
-            )
-            print("joy shape:", type(output_orig))
-        else:
-
-            output_orig = model(
-                input_ids=input_ids_rmpad,
-                attention_mask=None,
-                position_ids=position_ids,
-                packed_seq_params=packed_seq_params,
-            )
+        output_orig = model(
+            input_ids=input_ids_rmpad,
+            attention_mask=None,
+            position_ids=position_ids,
+            packed_seq_params=packed_seq_params,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+        )
 
         if post_process and logits_processor is not None:
             args = {
@@ -163,23 +133,13 @@ def gptmodel_forward_qwen2_5_vl(
         new_input_ids, new_attention_mask, new_position_ids = remove_left_padding(
             input_ids, attention_mask, position_ids, sequence_parallel, pre_process=pre_process
         )
-        if "pixel_values" in multi_modal_inputs.keys():
-            output = model(
-                input_ids=new_input_ids,
-                position_ids=new_position_ids,
-                attention_mask=new_attention_mask,
-                pixel_values=pixel_values,
-                image_grid_thw=image_grid_thw,
-            )
-        elif "pixel_values_videos" in multi_modal_inputs.keys():
-            output = model(
-                input_ids=input_ids_rmpad,
-                attention_mask=None,
-                position_ids=position_ids,
-                packed_seq_params=packed_seq_params,
-                pixel_values_videos=pixel_values_videos,
-                video_grid_thw=video_grid_thw,
-            )
+        output = model(
+            input_ids=new_input_ids,
+            position_ids=new_position_ids,
+            attention_mask=new_attention_mask,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+        )
         output = recover_left_padding(
             output, new_attention_mask, attention_mask, sequence_length, post_process=post_process
         )

@@ -157,7 +157,6 @@ class MegatronModelMerger(BaseModelMerger):
             expert_model_parallel_size=1,
         )
         model_parallel_cuda_manual_seed(0)
-        self.config.hf_model_config_path = "/media/vlm_model/Qwen2.5-VL-7B-Instruct"
         self.hf_config = AutoConfig.from_pretrained(
             self.config.hf_model_config_path, trust_remote_code=self.config.trust_remote_code
         )

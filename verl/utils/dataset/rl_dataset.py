@@ -237,7 +237,7 @@ class RLHFDataset(Dataset):
                 # due to the video key is "video" instead of "videos" in vllm, we need to use "video" here
                 # link: https://github.com/vllm-project/vllm/blob/3c545c0c3b98ee642373a308197d750d0e449403/vllm/multimodal/parse.py#L205
                 multi_modal_data["video"] = [video.numpy() for video in videos]
-            
+
             model_inputs = self.processor(text=[raw_prompt], images=images, videos=videos, return_tensors="pt")
 
             input_ids = model_inputs.pop("input_ids")
@@ -247,7 +247,6 @@ class RLHFDataset(Dataset):
                 model_inputs.pop("second_per_grid_ts")
 
             # There's a trap here, multi_modal_inputs has to be a dict, not BatchFeature
-
             row_dict["multi_modal_data"] = multi_modal_data
 
             # We will do batch.union() in the trainer,

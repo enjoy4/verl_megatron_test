@@ -70,10 +70,9 @@ def load_state_dict_to_megatron_gptmodel(state_dict, wrapped_models, config, par
 
     def broadcast_params(module):
         for param in module.parameters():
-            with torch.no_grad():
-                torch.distributed.broadcast(
-                    param.data, src=mpu.get_data_parallel_src_rank(), group=mpu.get_data_parallel_group()
-                )
+            torch.distributed.broadcast(
+                param.data, src=mpu.get_data_parallel_src_rank(), group=mpu.get_data_parallel_group()
+            )
 
     dp_rank = mpu.get_data_parallel_rank()
     pp_rank = mpu.get_pipeline_model_parallel_rank()
@@ -132,10 +131,9 @@ def load_state_dict_to_megatron_gptmodel(state_dict, wrapped_models, config, par
                 device=get_device_id(),
                 requires_grad=False,
             )
-        with torch.no_grad():
-            if torch.distributed.get_rank() == src_rank:
-                tensor.data.copy_(weight)
-            dist.broadcast(tensor, src=src_rank, group=mp_group)
+        if torch.distributed.get_rank() == src_rank:
+            tensor.data.copy_(weight)
+        dist.broadcast(tensor, src=src_rank, group=mp_group)
 
     def _broadcast_tp_shard_tensor_vocab(tensor, name, chunk_dim=0, mutate_func=None) -> torch.Tensor:
         """broadcast tensor in tp shards across mp_group"""
@@ -179,12 +177,11 @@ def load_state_dict_to_megatron_gptmodel(state_dict, wrapped_models, config, par
             sync_tensor = torch.empty_like(tensor, device=get_device_id(), requires_grad=False)
 
         for i in range(tp_size):
-            with torch.no_grad():
-                if torch.distributed.get_rank() == src_rank:
-                    sync_tensor.data.copy_(tensor_chunk[i])
-                dist.broadcast(sync_tensor, src=src_rank, group=mp_group)
-                if (i == tp_rank) and (tensor is not None):
-                    tensor.data.copy_(sync_tensor)
+            if torch.distributed.get_rank() == src_rank:
+                sync_tensor.data.copy_(tensor_chunk[i])
+            dist.broadcast(sync_tensor, src=src_rank, group=mp_group)
+            if (i == tp_rank) and (tensor is not None):
+                tensor.data.copy_(sync_tensor)
 
     def _broadcast_tp_shard_tensor(tensor, name, chunk_dim=0, mutate_func=None) -> torch.Tensor:
         """broadcast tensor in tp shards across mp_group"""
@@ -227,12 +224,11 @@ def load_state_dict_to_megatron_gptmodel(state_dict, wrapped_models, config, par
             sync_tensor = torch.empty_like(tensor, device=get_device_id(), requires_grad=False)
 
         for i in range(tp_size):
-            with torch.no_grad():
-                if torch.distributed.get_rank() == src_rank:
-                    sync_tensor.data.copy_(tensor_chunk[i])
-                dist.broadcast(sync_tensor, src=src_rank, group=mp_group)
-                if (i == tp_rank) and (tensor is not None):
-                    tensor.data.copy_(sync_tensor)
+            if torch.distributed.get_rank() == src_rank:
+                sync_tensor.data.copy_(tensor_chunk[i])
+            dist.broadcast(sync_tensor, src=src_rank, group=mp_group)
+            if (i == tp_rank) and (tensor is not None):
+                tensor.data.copy_(sync_tensor)
 
     def _broadcast_tp_shard_tensor_gate_up(tensor, gate_name, up_name) -> torch.Tensor:
         """broadcast tensor in tp shards across mp_group"""
@@ -283,12 +279,11 @@ def load_state_dict_to_megatron_gptmodel(state_dict, wrapped_models, config, par
             sync_tensor = torch.empty_like(tensor, device=get_device_id(), requires_grad=False)
 
         for i in range(tp_size):
-            with torch.no_grad():
-                if torch.distributed.get_rank() == src_rank:
-                    sync_tensor.data.copy_(tensor_chunk[i])
-                dist.broadcast(sync_tensor, src=src_rank, group=mp_group)
-                if (i == tp_rank) and (tensor is not None):
-                    tensor.data.copy_(sync_tensor)
+            if torch.distributed.get_rank() == src_rank:
+                sync_tensor.data.copy_(tensor_chunk[i])
+            dist.broadcast(sync_tensor, src=src_rank, group=mp_group)
+            if (i == tp_rank) and (tensor is not None):
+                tensor.data.copy_(sync_tensor)
 
     def _broadcast_tp_shard_tensor_qkv(tensor, q_name, k_name, v_name, bias=False) -> torch.Tensor:
         """broadcast tensor in tp shards across mp_group"""
@@ -379,12 +374,11 @@ def load_state_dict_to_megatron_gptmodel(state_dict, wrapped_models, config, par
             sync_tensor = torch.empty_like(tensor, device=get_device_id(), requires_grad=False)
 
         for i in range(tp_size):
-            with torch.no_grad():
-                if torch.distributed.get_rank() == src_rank:
-                    sync_tensor.data.copy_(tensor_chunk[i])
-                dist.broadcast(sync_tensor, src=src_rank, group=mp_group)
-                if (i == tp_rank) and (tensor is not None):
-                    tensor.data.copy_(sync_tensor)
+            if torch.distributed.get_rank() == src_rank:
+                sync_tensor.data.copy_(tensor_chunk[i])
+            dist.broadcast(sync_tensor, src=src_rank, group=mp_group)
+            if (i == tp_rank) and (tensor is not None):
+                tensor.data.copy_(sync_tensor)
 
     if dp_rank == 0:
         # Embeddings
