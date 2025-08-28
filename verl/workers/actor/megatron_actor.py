@@ -48,6 +48,7 @@ from verl.utils.py_functional import append_to_dict
 from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import broadcast_dict_tensor
 from verl.workers.actor import BasePPOActor
+from verl.utils.precheck_embed import mm_precheck_and_sync
 
 __all__ = ["MegatronPPOActor"]
 
@@ -207,6 +208,18 @@ class MegatronPPOActor(BasePPOActor):
             response = batch["responses"]
             response_length = response.size(1)
             with torch.no_grad():
+                precheck_mismatch = bool(getattr(data, "meta_info", {}).get("precheck_mismatch", False))
+                if precheck_mismatch:
+                    skip, reason, detail = mm_precheck_and_sync(data, self.actor_module)
+                    if skip:
+                        self._skip_current_batch = True            # bool
+                        self._skip_reason = reason                 # str
+                        self._skip_detail = detail                 # dict (optional)
+                        dev = data.batch["input_ids"].device
+                        log_probs = torch.empty((0, 0), dtype=torch.float32, device=dev)
+                        entropys  = torch.empty((0, 0), dtype=torch.float32, device=dev)
+                        return log_probs, entropys
+
                 output = self.forward_backward_batch(
                     data,
                     forward_only=True,
@@ -492,13 +505,21 @@ class MegatronPPOActor(BasePPOActor):
             position_ids = batch["position_ids"]
 
             multi_modal_inputs = {}
-            if "multi_modal_inputs" in batch:
-                for key in batch["multi_modal_inputs"][0].keys():
-                    idxs = batch["multi_modal_inputs_idx"]
-                    mmi = batch["multi_modal_inputs"]
-                    multi_modal_inputs[key] = torch.cat(
-                        [mmi[idx].get(key) for idx in idxs if mmi[idx].get(key) is not None], dim=0
-                    )
+            idx_list = batch["multi_modal_inputs_idx"]
+            all_keys = set()
+            # collect keys from all samples; first may be text-only
+            for i in idx_list:
+                all_keys.update(batch["multi_modal_inputs"][i].keys())
+            for key in all_keys:
+                tensors = []
+                for i in idx_list:                          # keep original order
+                    val = batch["multi_modal_inputs"][i].get(key)
+                    if val is not None:                     # skip pure‑text rows
+                        tensors.append(val)
+                if tensors:                                 # at least one visual tensor
+                    cat_tensor = torch.cat(tensors, dim=0)
+                    multi_modal_inputs[key] = cat_tensor
+
             responses = batch["responses"]
             response_length = responses.size(1)
             label = position_ids.clone()

@@ -280,11 +280,20 @@ class MegatronRewardModel(BasePPORewardModel):
             forward_fn = get_mcore_forward_fn(self.hf_config)
 
             multi_modal_inputs = {}
-            if "multi_modal_inputs" in batch:
-                for key in batch["multi_modal_inputs"][0].keys():
-                    multi_modal_inputs[key] = torch.cat(
-                        [batch["multi_modal_inputs"][i][key] for i in batch["multi_modal_inputs_idx"]], dim=0
-                    )
+            idx_list = batch["multi_modal_inputs_idx"]
+            all_keys = set()
+            # collect keys from all samples; first may be text-only
+            for i in idx_list:
+                all_keys.update(batch["multi_modal_inputs"][i].keys())
+            for key in all_keys:
+                tensors = []
+                for i in idx_list:                          # keep original order
+                    val = batch["multi_modal_inputs"][i].get(key)
+                    if val is not None:                     # skip pure‑text rows
+                        tensors.append(val)
+                if tensors:                                 # at least one visual tensor
+                    cat_tensor = torch.cat(tensors, dim=0)
+                    multi_modal_inputs[key] = cat_tensor
 
             output = forward_fn(
                 model,

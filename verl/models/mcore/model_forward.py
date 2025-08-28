@@ -99,6 +99,15 @@ def gptmodel_forward_qwen2_5_vl(
     image_grid_thw = (
         multi_modal_inputs["image_grid_thw"].to(input_ids.device) if "image_grid_thw" in multi_modal_inputs else None
     )
+
+    pixel_values_videos = (
+        multi_modal_inputs["pixel_values_videos"].to(input_ids.device)
+        if "pixel_values_videos" in multi_modal_inputs else None
+    )
+    video_grid_thw = (
+        multi_modal_inputs["video_grid_thw"].to(input_ids.device) if "video_grid_thw" in multi_modal_inputs else None
+    )
+
     if pack_seqs:
         batch_size, seq_len = attention_mask.shape[:2]
         input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(input_ids, attention_mask, pre_process=True)
@@ -109,7 +118,9 @@ def gptmodel_forward_qwen2_5_vl(
             position_ids=position_ids,
             packed_seq_params=packed_seq_params,
             pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
             image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
         )
 
         if post_process and logits_processor is not None:
@@ -138,7 +149,9 @@ def gptmodel_forward_qwen2_5_vl(
             position_ids=new_position_ids,
             attention_mask=new_attention_mask,
             pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
             image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
         )
         output = recover_left_padding(
             output, new_attention_mask, attention_mask, sequence_length, post_process=post_process

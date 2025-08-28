@@ -613,7 +613,33 @@ class ActorRolloutRefWorker(MegatronWorker, DistProfilerExtension):
         data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
         data.meta_info["temperature"] = self.config.rollout.temperature
         data = data.to(get_device_id())
+        precheck_mismatch = bool(getattr(data, "meta_info", {}).get("precheck_mismatch", False))
         output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)
+        if precheck_mismatch:
+            skip_flag = bool(getattr(self.actor, "_skip_current_batch", False))
+            if skip_flag or output.numel() == 0:
+                reason = str(getattr(self.actor, "_skip_reason", "")) or "mm precheck failed"
+                detail = getattr(self.actor, "_skip_detail", {}) or {}
+
+                # clear flags to avoid leaking to next batch
+                if hasattr(self.actor, "_skip_current_batch"): self.actor._skip_current_batch = False
+                if hasattr(self.actor, "_skip_reason"): self.actor._skip_reason = ""
+                if hasattr(self.actor, "_skip_detail"): self.actor._skip_detail = {}
+
+                meta = {
+                    "skip": True,
+                    "skip_reason": reason,
+                    "skip_detail": detail,
+                    "temperature": self.config.rollout.temperature,
+                }
+                output = DataProto.from_dict(tensors={}, meta_info=meta).to("cpu")
+
+            if self._is_offload_param:
+                offload_megatron_model_to_cpu(self.actor_module)
+                log_gpu_memory_usage("After offload actor params and grad during compute_log_prob", logger=logger)
+            get_torch_device().empty_cache()
+            return output
+
         output = DataProto.from_dict(
             tensors={"old_log_probs": output, "entropys": entropys},
             meta_info={"temperature": self.config.rollout.temperature},

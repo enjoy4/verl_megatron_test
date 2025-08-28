@@ -89,6 +89,30 @@ def default_compute_score(
         from . import geo3k
 
         res = geo3k.compute_score(solution_str, ground_truth)
+
+    elif data_source in ["egolife","cosmos", "scannet_mcq", "vsibench_mcq", "phyx"]:
+        from . import egolife
+
+        res = egolife.compute_score_format91(solution_str, ground_truth)
+    elif data_source in ["scannet_qa","vsibench_qa"]:
+        from . import scannet_qa
+
+        res = scannet_qa.compute_score_format91(solution_str, ground_truth)
+    elif data_source in ["robopoint"]:
+        # from . import robopoint
+        from . import robopoint_gaussian
+
+        res = robopoint_gaussian.compute_score_format91(solution_str, ground_truth)
+    elif data_source in ["egolife_geoR"]:
+        from . import egolife
+
+        res = egolife.compute_score(solution_str, ground_truth)
+    
+    elif data_source in ["egolife_geoR73"]:
+        from . import egolife
+
+        res = egolife.compute_score_format73(solution_str, ground_truth)
+
     elif data_source in [
         "searchR1_nq",
         "searchR1_triviaqa",
@@ -101,9 +125,27 @@ def default_compute_score(
         from . import search_r1_like_qa_em
 
         res = search_r1_like_qa_em.compute_score(solution_str, ground_truth)
+    elif data_source in ["egolife", "cosmos", "scannet"]:
+        from . import egolife
+
+        res = egolife.compute_score_formatE(solution_str, ground_truth)
+    elif data_source in ["robopoint"]:
+        # from . import robopoint
+        from . import robopoint_gaussian
+
+        res = robopoint_gaussian.compute_score(solution_str, ground_truth)
+    elif data_source in ["egolife_geoR"]:
+        from . import egolife
+
+        res = egolife.compute_score_formatE(solution_str, ground_truth)
+    
+    elif data_source in ["egolife_geoR73"]:
+        from . import egolife
 
     else:
-        raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
+        # raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
+        from . import no_format
+        res = no_format.compute_score(solution_str, ground_truth)
 
     if isinstance(res, dict):
         return res

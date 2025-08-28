@@ -30,6 +30,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from .attention import Qwen2_5VLSelfAttention
 from .vision_model import Qwen2_5VisionModel
 
+
 # Note: This is under development and may be missing features.
 class Qwen2_5VLModel(MegatronModule):
     """Qwen2.5VL multi-modal model.
@@ -189,43 +190,6 @@ class Qwen2_5VLModel(MegatronModule):
             for param in module.parameters():
                 param.requires_grad = False
 
-    def _vision_span_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
-        VISION_START_ID = 151652  # <|vision_start|>
-        VISION_END_ID   = 151653  # <|vision_end|>
-        if input_ids.dim() == 1:
-            ids = input_ids
-            L = ids.size(0)
-            m = torch.zeros(L, dtype=torch.bool, device=ids.device)
-            in_span = False
-            for i in range(L):
-                tok = ids[i].item()
-                if tok == VISION_START_ID:
-                    in_span = True
-                    continue
-                if tok == VISION_END_ID:
-                    in_span = False
-                    continue
-                if in_span:
-                    m[i] = True
-            return m
-        else:
-            B, L = input_ids.shape
-            m = torch.zeros(B, L, dtype=torch.bool, device=input_ids.device)
-            for b in range(B):
-                ids = input_ids[b]
-                in_span = False
-                for i in range(L):
-                    tok = ids[i].item()
-                    if tok == VISION_START_ID:
-                        in_span = True
-                        continue
-                    if tok == VISION_END_ID:
-                        in_span = False
-                        continue
-                    if in_span:
-                        m[b, i] = True
-        return m
-
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -246,8 +210,7 @@ class Qwen2_5VLModel(MegatronModule):
             image_data (torch.Tensor): input image of shape [total_thw_size, n_features].
             input_ids (torch.Tensor): input text ids [batch, text_seq_len].
             position_ids (torch.Tensor): input text position ids [batch, text_seq_len].
-            attention_mask (torch.Tensor): attention mask for the language model [batch, 1, combined_seq_len,
-                combined_seq_len].
+            attention_mask (torch.Tensor): attention mask for the language model [batch, 1, combined_seq_len, combined_seq_len].
             labels (torch.Tensor): Optional target text labels [batch, combined_seq_len].
             inference_params (InferenceParams): Inference-time parameters including KV cache.
 
@@ -257,36 +220,73 @@ class Qwen2_5VLModel(MegatronModule):
                 others -- mixture
             *_input_mask: should not be None in the first PP stage
         Returns:
-            output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
-                [b, s, vocab_size].
+            output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape [b, s, vocab_size].
         """
+        # print(f"bd debug Qwen2_5VLModel.forward: input_ids.shape = {getattr(input_ids, 'shape', None)}")
+        # print(f"bd debug Qwen2_5VLModel.forward: pixel_values.shape = {getattr(pixel_values, 'shape', None)}")
+        # print(f"bd debug Qwen2_5VLModel.forward: pixel_values_videos.shape = {getattr(pixel_values_videos, 'shape', None)}")
+        # print(f"bd debug Qwen2_5VLModel.forward: image_grid_thw.shape = {getattr(image_grid_thw, 'shape', None)}")
+        # print(f"bd debug Qwen2_5VLModel.forward: video_grid_thw.shape = {getattr(video_grid_thw, 'shape', None)}")
+        # import traceback
+        # traceback.print_stack()
         video_start_index = 0
         vision_grid_thw = None
         vision_data = None
-        vision_span = self._vision_span_mask(input_ids)
 
+        rank = torch.distributed.get_rank()            
+        tp_rank  = mpu.get_tensor_model_parallel_rank()  
+        pp_rank  = mpu.get_pipeline_model_parallel_rank()
+        dp_rank  = mpu.get_data_parallel_rank()
+
+        debug_path = "/media/damoxing/yoyo-ni/baige_debug/customer_a800_work/0804_4ji/dump_input_id.txt"
+    
         if image_grid_thw is not None:
-            image_mask = (input_ids == self.image_token_id) & vision_span
+            image_mask = input_ids == self.image_token_id
             vision_grid_thw = image_grid_thw
             vision_data = pixel_values
-            video_start_index = image_mask.sum().item()
+            num_image_mask = image_mask.sum().item()
 
-        if video_grid_thw is not None:
-            video_mask = (input_ids == self.video_token_id) & vision_span
+            num_windows = pixel_values.shape[0] // self.spatial_merge_unit
             
+            if num_image_mask != num_windows:
+                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: num_image_mask={num_image_mask}, num_windows={num_windows}")
+                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: input_ids.shape = {getattr(input_ids, 'shape', None)}")
+                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: pixel_values.shape = {getattr(pixel_values, 'shape', None)}")
+                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: pixel_values_videos.shape = {getattr(pixel_values_videos, 'shape', None)}")
+                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: image_grid_thw.shape = {getattr(image_grid_thw, 'shape', None)}")
+                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: video_grid_thw.shape = {getattr(video_grid_thw, 'shape', None)}")
+                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: image vision_data: {vision_data.shape} | image vision_grid_thw: {vision_grid_thw.shape}")
+                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: image_mask.shape = {image_mask.shape}")
+
+                # tokenizer decode
+                with open(debug_path, "a", encoding="utf-8") as f:
+                    for i, seq in enumerate(input_ids):
+                        raw = self.tokenizer.decode(seq.tolist(), skip_special_tokens=False)
+                        f.write(f"-------------------------sample {i} -------------------------------")
+                        f.write(f"-------------------------global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}-------------------------------")
+                        f.write(f"image mask error\n")
+                        f.write(f"raw = {raw}\n")
+                        f.write(f"-------------------------------------------------------------------\n\n\n")
+
+            video_start_index = min(num_image_mask, num_windows)
+        print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: video_start_index = {video_start_index}")
+            
+        if video_grid_thw is not None:
+            video_mask = input_ids == self.video_token_id
+
             if image_grid_thw is not None:
                 vision_grid_thw = torch.cat([vision_grid_thw, video_grid_thw], dim=0)
                 vision_data = torch.cat([vision_data, pixel_values_videos], dim=0)
+                #video_start_index = image_mask.sum().item() + video_mask.sum().item()
             else:
                 vision_grid_thw = video_grid_thw
                 vision_data = pixel_values_videos
-
-        use_inference_kv_cache = (
-            inference_params is not None and "image_tokens_count" in inference_params.key_value_memory_dict
-        )
-        use_inference_kv_cache = (
-            inference_params is not None and "image_tokens_count" in inference_params.key_value_memory_dict
-        )
+                #video_start_index = video_mask.sum().item()
+        
+        # print(f"bd debug Qwen2_5VLModel.forward: video_start_index = {video_start_index}")
+                
+        use_inference_kv_cache = inference_params is not None and "image_tokens_count" in inference_params.key_value_memory_dict
+        use_inference_kv_cache = inference_params is not None and "image_tokens_count" in inference_params.key_value_memory_dict
         if use_inference_kv_cache:
             raise NotImplementedError()
 
@@ -298,6 +298,8 @@ class Qwen2_5VLModel(MegatronModule):
                     grid_thw=vision_grid_thw,  # should provided in each EPP stage
                 )
 
+                # print(f"bd debug Qwen2_5VLModel.forward: vision_embeds: {vision_embeds.shape} | vision_data: {vision_data.shape} | vision_grid_thw: {vision_grid_thw.shape}")
+
             # If running inference, the language model KV cache will be updated for image token positions.
             # Here we store the image tokens sequence length, which can be used as an offset to the KV cache later.
             if inference_params is not None:
@@ -306,8 +308,7 @@ class Qwen2_5VLModel(MegatronModule):
                 #     vision_embeddings.shape[0]
                 # )
 
-            # If running inference, we can skip image token computation if they were computed already earlier
-            # for this sample.
+            # If running inference, we can skip image token computation if they were computed already earlier for this sample.
             if use_inference_kv_cache:
                 language_embeddings: torch.Tensor = self.language_model.embedding(
                     input_ids=input_ids,
@@ -317,48 +318,129 @@ class Qwen2_5VLModel(MegatronModule):
                 combined_embeddings = language_embeddings
             elif vision_embeds is not None:
                 if video_start_index == 0:
+                    # print("bd debug Qwen2_5VLModel.forward: video")
                     image_embeds = None
                     video_embeds = vision_embeds
                 elif video_start_index == vision_embeds.shape[0]:
+                    # print("bd debug Qwen2_5VLModel.forward: image")
                     image_embeds = vision_embeds
                     video_embeds = None
                 elif 0 < video_start_index < vision_embeds.shape[0]:
+                    # print("bd debug Qwen2_5VLModel.forward mixture")
                     image_embeds = vision_embeds[:video_start_index]
                     video_embeds = vision_embeds[video_start_index:]
                 else:
-                    raise ValueError(
-                        f"Expect video token start index in range [0, {vision_embeds.shape[0]}], but got "
-                        f"{video_start_index}"
-                    )
+                    raise ValueError(f"Expect video token start index in range [0, {vision_embeds.shape[0]}], but got {video_start_index}")
 
                 combined_embeddings = self.language_model.embedding(
                     input_ids=input_ids,
                     position_ids=None,  # NOTE: disable
                 )  # [text_seq_len, b, h_language]
+                # print(f"bd debug Qwen2_5VLModel.forward: vison language_embeddings.shape = {combined_embeddings.shape}")
+                # torch.save(
+                #     combined_embeddings.detach().cpu(),
+                #     "dump/vision_language_embeddings.pth"
+                # )
 
                 if image_embeds is not None or video_embeds is not None:
                     combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
                     if image_embeds is not None:
-                        image_mask = ((input_ids == self.image_token_id) & vision_span).contiguous()
+                        image_mask = (input_ids == self.image_token_id).contiguous()
+                        n_mask   = int(image_mask.sum().item())
+                        n_embed  = int(image_embeds.shape[0])
                         if image_mask.sum() > 0:
+                            if n_mask != n_embed:
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: not same: n_mask={n_mask}, n_embed={n_embed}")
+                                if n_mask == n_embed + 1:
+                                    print(f"!!! Crop the last image pad mask")
+                                    flat = image_mask.flatten()                                   # [B*S]
+                                    last_true = flat.nonzero(as_tuple=False).squeeze(1)[-1]      # 最后一个 True 的线性索引
+                                    flat[last_true] = False                                      # 裁掉它
+                                    image_mask = flat.view_as(image_mask)
+                                    assert combined_embeddings[image_mask].shape[0] == image_embeds.shape[0]
+                                else:
+                                    print(f"image pad && image embed gap is more than one!!!")
+                                    raise VideoEmbedMismatch(
+                                        f"[shape-mismatch] image_mask.sum={n_mask}, image_embeds.shape[0]={n_embed}",
+                                        n_mask=n_mask,
+                                        n_embed=n_embed,
+                                    )
                             combined_embeddings = combined_embeddings.clone()
-                            combined_embeddings[image_mask] = image_embeds.to(
-                                dtype=combined_embeddings.dtype, device=combined_embeddings.device
-                            )
+                            combined_embeddings[image_mask] = image_embeds.to(dtype=combined_embeddings.dtype, device=combined_embeddings.device)
+                        # print(f"bd debug Qwen2_5VLModel.forward: image combined_embeddings.shape = {combined_embeddings.shape}")
+                        # torch.save(
+                        #     combined_embeddings.detach().cpu(),
+                        #     "dump/vision_image_embeddings.pth"
+                        # )
                     if video_embeds is not None:
-                        video_mask = ((input_ids == self.video_token_id) & vision_span).contiguous()
+                        video_mask = (input_ids == self.video_token_id).contiguous()
+                        n_mask   = int(video_mask.sum().item())
+                        n_embed  = int(video_embeds.shape[0])
+                        
                         if video_mask.sum() > 0:
-                            combined_embeddings = combined_embeddings.clone()
-                            combined_embeddings[video_mask] = video_embeds.to(
-                                dtype=combined_embeddings.dtype, device=combined_embeddings.device
-                            )
-                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                            if n_mask != n_embed:
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: not same: n_mask={n_mask}, n_embed={n_embed}")
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: input_ids.shape = {getattr(input_ids, 'shape', None)}")
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: pixel_values.shape = {getattr(pixel_values, 'shape', None)}")
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: pixel_values_videos.shape = {getattr(pixel_values_videos, 'shape', None)}")
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: image_grid_thw.shape = {getattr(image_grid_thw, 'shape', None)}")
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: video_grid_thw.shape = {getattr(video_grid_thw, 'shape', None)}")
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: video_start_index = {video_start_index}")
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: vision_embeds: {vision_embeds.shape} | vision_data: {vision_data.shape} | vision_grid_thw: {vision_grid_thw.shape}")
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: video_mask.shape = {video_mask.shape}")
+                                tmp_ce = combined_embeddings[video_mask]
+                                print(f"global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}, bd debug: combined_embeddings.shape = {combined_embeddings.shape}, combined_embeddings[video_mask].shape={tmp_ce.shape}")
+                                
+                                # tokenizer decode input_ids
+                                with open(debug_path, "a", encoding="utf-8") as f:
+                                    for i, seq in enumerate(input_ids):
+                                        raw = self.tokenizer.decode(seq.tolist(), skip_special_tokens=False)
+                                        f.write(f"-------------------------sample {i} -------------------------------")
+                                        f.write(f"-------------------------global={rank}|tp={tp_rank}|pp={pp_rank}|dp={dp_rank}-------------------------------")
+                                        f.write(f"video mask error\n")
+                                        f.write(f"raw = {raw}\n")
+                                        f.write(f"-------------------------------------------------------------------\n\n\n")
 
+                                if n_mask == n_embed + 1:
+                                    print(f"!!! Crop the last video pad mask")
+                                    flat = video_mask.flatten()                                   # [B*S]
+                                    last_true = flat.nonzero(as_tuple=False).squeeze(1)[-1]      # 最后一个 True 的线性索引
+                                    flat[last_true] = False                                      # 裁掉它
+                                    video_mask = flat.view_as(video_mask)
+                                    assert combined_embeddings[video_mask].shape[0] == video_embeds.shape[0]
+                                else:
+                                    print(f"video pad && video embed gap is more than one!!!")
+                                    raise VideoEmbedMismatch(
+                                        f"[shape-mismatch] video_mask.sum={n_mask}, video_embeds.shape[0]={n_embed}",
+                                        n_mask=n_mask,
+                                        n_embed=n_embed,
+                                    )
+                               
+                            combined_embeddings = combined_embeddings.clone()
+                            combined_embeddings[video_mask] = video_embeds.to(dtype=combined_embeddings.dtype, device=combined_embeddings.device)
+                        # print(f"bd debug Qwen2_5VLModel.forward: video combined_embeddings.shape = {combined_embeddings.shape}")
+                        # torch.save(
+                        #     combined_embeddings.detach().cpu(),
+                        #     "dump/vision_video_embeddings.pth"
+                        # )
+                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                    # print(f"bd debug Qwen2_5VLModel.forward: vison combined_embeddings.shape = {combined_embeddings.shape} ")
+                    # torch.save(
+                    #     combined_embeddings.detach().cpu(),
+                    #     "dump/vision_combined_embeddings.pth"
+                    # )
             else:
+                # print("bd debug Qwen2_5VLModel.forward: pure text")
                 combined_embeddings = self.language_model.embedding(
                     input_ids=input_ids,
                     position_ids=None,  # NOTE: disable
                 )  # [text_seq_len, b, h_language]
+                # print(f"bd debug Qwen2_5VLModel.forward: pure_text language_embeddings.shape = {combined_embeddings.shape}")
+                # torch.save(
+                #     combined_embeddings.detach().cpu(),
+                #     "dump/pure_text_embeddings.pth"
+                # )
+
             if self.config.sequence_parallel:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
                 combined_embeddings = combined_embeddings.contiguous()
@@ -366,9 +448,7 @@ class Qwen2_5VLModel(MegatronModule):
             combined_embeddings = None
         from .rope_utils import get_rope_index
 
-        position_ids, _ = get_rope_index(
-            input_ids, image_grid_thw=image_grid_thw, video_grid_thw=video_grid_thw, attention_mask=attention_mask
-        )
+        position_ids, _ = get_rope_index(input_ids, image_grid_thw=image_grid_thw, video_grid_thw=video_grid_thw, attention_mask=attention_mask)
 
         output = self.language_model(
             input_ids=None,
