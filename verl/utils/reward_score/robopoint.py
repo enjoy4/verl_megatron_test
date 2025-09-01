@@ -97,6 +97,14 @@ def compute_score(predict_str: str, ground_truth: str) -> float:
 def compute_score_no_format(predict_str: str, ground_truth: str) -> float:
     return accuracy_reward(predict_str, ground_truth)
 
+def compute_score_format91(predict_str: str, ground_truth: str) -> float:
+    format_reward_1 = format_reward_think_answer(predict_str)
+    format_reward_2 = format_reward_coordinates(predict_str)
+    acc_reward = accuracy_reward(predict_str, ground_truth)
+    return {
+        "acc": acc_reward,
+        "score": 0.04*format_reward_1+0.06*format_reward_2+0.9*acc_reward
+    }
 
 if __name__ == "__main__":
     test_predict_wrong_format = """

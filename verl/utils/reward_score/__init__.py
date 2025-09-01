@@ -103,6 +103,10 @@ def default_compute_score(
         from . import robopoint_gaussian
 
         res = robopoint_gaussian.compute_score_format91(solution_str, ground_truth)
+    elif data_source in ["robopoint01"]:
+        from . import robopoint
+
+        res = robopoint.compute_score_format91(solution_str, ground_truth)
     elif data_source in ["egolife_geoR"]:
         from . import egolife
 
@@ -125,22 +129,6 @@ def default_compute_score(
         from . import search_r1_like_qa_em
 
         res = search_r1_like_qa_em.compute_score(solution_str, ground_truth)
-    elif data_source in ["egolife", "cosmos", "scannet"]:
-        from . import egolife
-
-        res = egolife.compute_score_formatE(solution_str, ground_truth)
-    elif data_source in ["robopoint"]:
-        # from . import robopoint
-        from . import robopoint_gaussian
-
-        res = robopoint_gaussian.compute_score(solution_str, ground_truth)
-    elif data_source in ["egolife_geoR"]:
-        from . import egolife
-
-        res = egolife.compute_score_formatE(solution_str, ground_truth)
-    
-    elif data_source in ["egolife_geoR73"]:
-        from . import egolife
 
     else:
         # raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
