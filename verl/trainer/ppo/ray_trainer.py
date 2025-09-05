@@ -21,6 +21,7 @@ This trainer supports model-agonistic model initialization with huggingface
 import json
 import os
 import uuid
+import pickle
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -967,6 +968,7 @@ class RayPPOTrainer:
         )
 
         print(f"local_global_step_folder: {local_global_step_folder}")
+
         actor_local_path = os.path.join(local_global_step_folder, "actor")
 
         actor_remote_path = (
@@ -1008,6 +1010,13 @@ class RayPPOTrainer:
         dataloader_local_path = os.path.join(local_global_step_folder, "data.pt")
         dataloader_state_dict = self.train_dataloader.state_dict()
         torch.save(dataloader_state_dict, dataloader_local_path)
+
+        if self.config.data.get("n_filter_epochs", -1) > 0:
+            filter_path = os.path.join(local_global_step_folder, "filter.pickle")
+            filtered_data = {k: v for k, v in self.train_dataset.uuid_2filter_epochs.items() if v != 0}
+            with open(filter_path, "wb") as f:
+                pickle.dump(filtered_data, f)
+            print(f"Save uuid_2filter_epochs to {filter_path}")
 
         # latest checkpointed iteration tracker (for atomic usage)
         local_latest_checkpointed_iteration = os.path.join(
@@ -1072,6 +1081,16 @@ class RayPPOTrainer:
             self.train_dataloader.load_state_dict(dataloader_state_dict)
         else:
             print(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
+
+        # load filter
+        if self.config.data.get("n_filter_epochs", -1) > 0:
+            filter_path = os.path.join(global_step_folder, "filter.pickle")
+            if os.path.exists(filter_path):
+                with open(filter_path, "rb") as f:
+                    self.train_dataset.uuid_2filter_epochs = defaultdict(int, pickle.load(f))
+                print(f"Load uuid_2filter_epochs from {filter_path}")
+            else:
+                print(f"Warning: No filter state found at {filter_path}")
 
     def _start_profiling(self, do_profile: bool) -> None:
         """Start profiling for all worker groups if profiling is enabled."""
@@ -1501,3 +1520,4 @@ class RayPPOTrainer:
                 if hasattr(self.train_dataset, "on_batch_end"):
                     # The dataset may be changed after each training batch
                     self.train_dataset.on_batch_end(batch=batch)
+
