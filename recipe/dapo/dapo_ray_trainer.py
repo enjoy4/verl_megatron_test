@@ -90,13 +90,30 @@ class RayDAPOTrainer(RayPPOTrainer):
 
         timing_raw = defaultdict(float)
         batch = None
+        all_none_batch = None
         num_prompt_in_batch = 0
         num_gen_batches = 0
         num_solve_all = 0
         num_solve_none = 0
+
+        n_filter_epochs = self.config.data.get("n_filter_epochs", -1)
+
+        print(f"n_filter_epochs: {n_filter_epochs}")
+
         for epoch in range(self.config.trainer.total_epochs):
-            total_cnt = 0 
+            total_cnt = 0
+
+            print(f"--------------- epoch: {epoch}-------------")
+
             for batch_dict in self.train_dataloader:
+                if n_filter_epochs > 0:
+                    # filter solve all/none samples that appear consecutively n_filter_epochs times in this step, (ndarray, )
+                    reserved_idx = np.where(batch_dict['filter_epochs'] < n_filter_epochs)
+                    if len(reserved_idx[0]) == 0:
+                        print("filter all samples in this step")
+                        progress_bar.update(1)
+                        continue
+
                 metrics = {}
 
                 do_profile = (
@@ -114,7 +131,10 @@ class RayDAPOTrainer(RayPPOTrainer):
                         if self.use_rm:
                             self.rm_wg.start_profile()
 
-                new_batch: DataProto = DataProto.from_single_dict(batch_dict)
+                new_batch: DataProto = DataProto.from_single_dict(batch_dict)[reserved_idx[0]] \
+                                        if n_filter_epochs > 0 else DataProto.from_single_dict(batch_dict)
+                print(f"new_batch length: {len(new_batch)}")
+
                 num_gen_batches += 1
                 # pop those keys for generation
                 if "multi_modal_data" in new_batch.non_tensor_batch.keys():
@@ -128,7 +148,6 @@ class RayDAPOTrainer(RayPPOTrainer):
                         non_tensor_batch_keys=["raw_prompt_ids"],
                     )
                 gen_batch = gen_batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
-
                 is_last_step = self.global_steps >= self.total_training_steps
 
                 with marked_timer("step", timing_raw):
@@ -231,14 +250,60 @@ class RayDAPOTrainer(RayPPOTrainer):
                             for uid, std in prompt_uid2metric_std.items()
                             if std > 0 or len(prompt_uid2metric_vals[uid]) == 1
                         ]
-                        num_solve_all += len([uid for uid, std in prompt_uid2metric_std.items() if std == 0 and len(prompt_uid2metric_vals[uid]) > 1 and prompt_uid2metric_vals[uid][0] == 1])
-                        num_solve_none += len([uid for uid, std in prompt_uid2metric_std.items() if std == 0 and len(prompt_uid2metric_vals[uid]) > 1 and prompt_uid2metric_vals[uid][0] == 0])
+
+                        solve_all_list = [uid for uid, std in prompt_uid2metric_std.items() if std == 0 and \
+                                                    len(prompt_uid2metric_vals[uid]) > 1 and prompt_uid2metric_vals[uid][0] == 1]
+                        solve_none_list = [uid for uid, std in prompt_uid2metric_std.items() if std == 0 and len(prompt_uid2metric_vals[uid]) > 1 and prompt_uid2metric_vals[uid][0] == 0]
+                        num_solve_all += len(solve_all_list)
+                        num_solve_none += len(solve_none_list)
+                        print(f"solve_all_list len: {len(solve_all_list)}")
+                        print(f"solve_none_list len: {len(solve_none_list)}")
+
                         num_prompt_in_batch += len(kept_prompt_uids)
 
                         kept_traj_idxs = []
+                        all_none_idxs = []
                         for idx, traj_from_prompt_uid in enumerate(new_batch.non_tensor_batch["uid"]):
                             if traj_from_prompt_uid in kept_prompt_uids:
                                 kept_traj_idxs.append(idx)
+                            else:
+                                all_none_idxs.append(idx)
+
+                        temp_batch = new_batch[all_none_idxs]
+                        all_none_batch = temp_batch if all_none_batch is None else DataProto.concat([all_none_batch, temp_batch])
+                        # Log rollout generations if enabled
+                        rollout_filter_data_dir = self.config.trainer.get("rollout_filter_data_dir", None)
+                        if rollout_filter_data_dir:
+                            inputs = self.tokenizer.batch_decode(all_none_batch.batch["prompts"], skip_special_tokens=True)
+                            outputs = self.tokenizer.batch_decode(all_none_batch.batch["responses"], skip_special_tokens=True)
+                            scores = all_none_batch.batch["token_level_scores"].sum(-1).cpu().tolist()
+                            self._dump_generations(
+                                inputs=inputs,
+                                outputs=outputs,
+                                scores=scores,
+                                reward_extra_infos_dict=reward_extra_infos_dict,
+                                dump_path=rollout_filter_data_dir,
+                            )
+
+
+                        if n_filter_epochs > 0:
+                            all_idxs = []
+                            n_response = self.config.actor_rollout_ref.rollout.n
+                            for idx, traj_from_prompt_uid in enumerate(new_batch.non_tensor_batch["uid"]):
+                                if traj_from_prompt_uid in solve_all_list:
+                                    all_idxs.append(idx)
+
+                            assert len(all_idxs) // n_response  == len(solve_all_list)
+
+                            for idx in kept_traj_idxs[::n_response]:
+                                ori = reserved_idx[0][idx // n_response]
+                                _uuid = batch_dict['uuid'][ori]
+                                self.train_dataset.uuid_2filter_epochs[_uuid] = 0
+
+                            for idx in all_idxs[::n_response]:
+                                ori = reserved_idx[0][idx // n_response]
+                                _uuid = batch_dict['uuid'][ori]
+                                self.train_dataset.uuid_2filter_epochs[_uuid] += 1
 
                         new_batch = new_batch[kept_traj_idxs]
                         batch = new_batch if batch is None else DataProto.concat([batch, new_batch])
@@ -427,6 +492,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                 metrics["batch/solve_none"] = num_solve_none/(num_gen_batches*self.config.data.train_batch_size)
                 metrics['batch/total_cnt'] = total_cnt
                 batch = None
+                all_none_batch = None
                 num_prompt_in_batch = 0
                 num_gen_batches = 0
                 num_solve_all = 0
@@ -442,3 +508,4 @@ class RayDAPOTrainer(RayPPOTrainer):
 
                 progress_bar.update(1)
                 self.global_steps += 1
+

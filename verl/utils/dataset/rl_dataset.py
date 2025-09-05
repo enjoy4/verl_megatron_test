@@ -116,6 +116,13 @@ class RLHFDataset(Dataset):
         self.filter_prompts = config.get("filter_prompts", True)
         self.serialize_dataset = False
         self.return_multi_modal_inputs = config.get("return_multi_modal_inputs", True)
+        # (sample uuid, fileter count)
+        if config.get("n_filter_epochs", -1) > 0:
+            self.uuid_2filter_epochs = defaultdict(int)
+            self.enable_filter_epochs = True
+        else:
+            self.enable_filter_epochs = False
+            self.uuid_2filter_epochs = None
 
         self._download()
         self._read_files_and_tokenize()
@@ -129,15 +136,21 @@ class RLHFDataset(Dataset):
 
     def _read_files_and_tokenize(self):
         dataframes = []
+        def add_uuid(sample, idx, file_name):
+            return {'uuid': f"{file_name}+{idx}"}
+ 
         for parquet_file in self.data_files:
             # read parquet files and cache
             dataframe = datasets.load_dataset("parquet", data_files=parquet_file)["train"]
-            dataframes.append(dataframe)
+            name = os.path.basename(parquet_file)
+            dataframes.append(dataframe.map(lambda example, idx: add_uuid(example, idx, name), with_indices=True) \
+                              if self.enable_filter_epochs else dataframe)
         self.dataframe: datasets.Dataset = datasets.concatenate_datasets(dataframes)
 
         print(f"dataset len: {len(self.dataframe)}")
 
         self.dataframe = self.maybe_filter_out_long_prompts(self.dataframe)
+
 
     def maybe_filter_out_long_prompts(self, dataframe: datasets.Dataset = None):
         # filter out too long prompts
@@ -390,6 +403,9 @@ class RLHFDataset(Dataset):
         row_dict["index"] = index
         row_dict["tools_kwargs"] = tools_kwargs
         row_dict["interaction_kwargs"] = interaction_kwargs
+        if self.enable_filter_epochs:
+            uuid = row_dict.get("uuid", "")
+            row_dict["filter_epochs"] = self.uuid_2filter_epochs[uuid]
         return row_dict
 
     def __getstate__(self):
@@ -401,3 +417,4 @@ class RLHFDataset(Dataset):
             return state
 
         return self.__dict__.copy()
+
