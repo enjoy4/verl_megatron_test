@@ -269,3 +269,4 @@ def apply_patch_mrope():
         return emb
 
     MultimodalRotaryEmbedding.forward = patch_multimodal_rotary_embedding_forward
+    print("mRoPE patched (THD, CP slicing disabled in mcore-0.12)")
