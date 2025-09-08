@@ -232,7 +232,7 @@ def get_rope_index_thd(
             pos_id_list = []
             seqlen = cu_seqlens_padded[1:] - cu_seqlens_padded[:-1]
             for i in range(bs):
-                pos_id_list.append(torch.arange(seqlen[i], device=input_ids.device).view(1, 1, -1).expend(3, 1, -1))
+                pos_id_list.append(torch.arange(seqlen[i], device=input_ids.device).view(1, 1, -1).expand(3, 1, -1))
 
             position_ids = torch.cat(pos_id_list, dim=2)
         return position_ids

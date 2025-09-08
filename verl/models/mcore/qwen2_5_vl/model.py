@@ -303,21 +303,25 @@ class Qwen2_5VLModel(MegatronModule):
             raise NotImplementedError()
 
         if self.pre_process:
-            original_vision_grid_thw = vision_grid_thw.clone()
-            if self.llm_cp_size > 1 and self.enable_vision_context_parallelism:
+            orig_has_vision = (vision_grid_thw is not None) and (vision_grid_thw.shape[0] > 0)
+            if (
+                orig_has_vision
+                and self.llm_cp_size > 1
+                and self.enable_vision_context_parallelism
+            ):
                 vision_data, vision_grid_thw, seqlen_on_cp_ranks = get_vision_cp_data(
                     vision_data, vision_grid_thw, self.square_merge_size
                 )
 
             vision_embeds = None
-            if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
+            if orig_has_vision:
                 vision_embeds = self.vision_model(
                     vision_data=vision_data,  # If None, vision model should use intermediate outputs (EPP > 1)
                     grid_thw=vision_grid_thw,  # should provided in each EPP stage
                 )
 
             if (
-                original_vision_grid_thw.shape[0] > 0
+                orig_has_vision
                 and self.llm_cp_size > 1
                 and self.enable_vision_context_parallelism
             ):

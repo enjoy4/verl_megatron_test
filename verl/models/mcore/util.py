@@ -91,9 +91,9 @@ def preprocess_packed_seqs(
 
     packed_seq_params = PackedSeqParams(
         qkv_format="thd",
-        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_q=cu_seqlens_padded,
         max_seqlen_q=max_seqlen_in_batch,
-        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens_padded,
         max_seqlen_kv=max_seqlen_in_batch,
         cu_seqlens_q_padded=cu_seqlens_padded,
         cu_seqlens_kv_padded=cu_seqlens_padded,
@@ -257,7 +257,6 @@ def postprocess_packed_seqs_for_dict_output(
     )
     return ret
 
-
 class get_embeddings_on_this_cp_rank_thd(torch.autograd.Function):
     """Performs sharding for Context Parallelism in THD format
 
@@ -409,18 +408,41 @@ def get_vision_cp_data(vision_data, vision_grid_thw, square_merge_size):
 
     img_num = vision_grid_thw.shape[0]
     img_num_per_rank = (img_num + cp_size - 1) // cp_size
-    seqlens = torch.repeat_interleave(vision_grid_thw[:, 1] * vision_grid_thw[:, 2], vision_grid_thw[:, 0])
+    
+    # columns: t, h, w
+    t = vision_grid_thw[:, 0].to(torch.long)
+    h = vision_grid_thw[:, 1].to(torch.long)
+    w = vision_grid_thw[:, 2].to(torch.long)
+    
+    seqlens = torch.repeat_interleave(h * w, t)
+
+    # sample index => frame index
+    t_prefix = torch.zeros(img_num + 1, dtype=torch.long)
+    if img_num > 0:
+        t_prefix[1:] = torch.cumsum(t.cpu(), dim=0)
+
+    # frame index => token
+    tok_prefix = torch.zeros(seqlens.numel() + 1, dtype=torch.long)
+    if seqlens.numel() > 0:
+        tok_prefix[1:] = torch.cumsum(seqlens, dim=0)
+
     vision_grid_thw_list = []
     vision_data_list = []
     seqlens_list = []
     for i in range(cp_size):
-        start_idx = i * img_num_per_rank
-        end_idx = min(start_idx + img_num_per_rank, img_num)
-        vision_grid_thw_list.append(vision_grid_thw[start_idx:end_idx])
-        seqlens_list.append(seqlens[start_idx:end_idx])
-        data_start_idx = seqlens[:start_idx].sum()
-        data_end_idx = seqlens[:end_idx].sum()
-        vision_data_list.append(vision_data[data_start_idx:data_end_idx])
+        s_img = i * img_num_per_rank
+        e_img = min(s_img + img_num_per_rank, img_num)
+
+        s_frame = int(t_prefix[s_img].item())
+        e_frame = int(t_prefix[e_img].item())
+
+        s_tok = int(tok_prefix[s_frame].item())
+        e_tok = int(tok_prefix[e_frame].item())
+
+        vision_grid_thw_list.append(vision_grid_thw[s_img:e_img])
+        vision_data_list.append(vision_data[s_tok:e_tok])
+        seqlens_list.append(seqlens[s_frame:e_frame])
+        
     new_vision_grid_thw = vision_grid_thw_list[cp_rank]
     new_vision_data = vision_data_list[cp_rank]
     new_seqlens_list = [t // square_merge_size for t in seqlens_list]
