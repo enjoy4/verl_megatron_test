@@ -26,6 +26,8 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core import mpu
+import torch.distributed as dist
 
 from ..util import (
     AllGatherVisionEmbeddings,
@@ -303,9 +305,9 @@ class Qwen2_5VLModel(MegatronModule):
             raise NotImplementedError()
 
         if self.pre_process:
-            orig_has_vision = (vision_grid_thw is not None) and (vision_grid_thw.shape[0] > 0)
             if (
-                orig_has_vision
+                vision_grid_thw is not None
+                and vision_grid_thw.shape[0] > 0
                 and self.llm_cp_size > 1
                 and self.enable_vision_context_parallelism
             ):
@@ -313,17 +315,25 @@ class Qwen2_5VLModel(MegatronModule):
                     vision_data, vision_grid_thw, self.square_merge_size
                 )
 
+            cp_data_has_vision = (vision_grid_thw is not None) and (vision_grid_thw.shape[0] > 0)
+            cp_group = mpu.get_context_parallel_group()
+            cp_world = mpu.get_context_parallel_world_size()
+            local_flag = torch.tensor([1 if cp_data_has_vision else 0], device=input_ids.device, dtype=torch.int32)
+            dist.all_reduce(local_flag, op=dist.ReduceOp.SUM, group=cp_group)
+            # true if any cp rank has vision tokens
+            group_has_vision = bool(local_flag.item() > 0)
+
             vision_embeds = None
-            if orig_has_vision:
+            if cp_data_has_vision:
                 vision_embeds = self.vision_model(
                     vision_data=vision_data,  # If None, vision model should use intermediate outputs (EPP > 1)
                     grid_thw=vision_grid_thw,  # should provided in each EPP stage
                 )
 
             if (
-                orig_has_vision
-                and self.llm_cp_size > 1
+                self.llm_cp_size > 1
                 and self.enable_vision_context_parallelism
+                and group_has_vision
             ):
                 if vision_embeds is None:
                     dtype = torch.float32
