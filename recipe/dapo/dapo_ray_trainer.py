@@ -24,8 +24,6 @@ from pprint import pprint
 import numpy as np
 import torch
 from tqdm import tqdm
-import os
-import json
 
 from verl import DataProto
 from verl.trainer.ppo.core_algos import agg_loss
@@ -49,32 +47,6 @@ class RayDAPOTrainer(RayPPOTrainer):
     """
     Note that this trainer runs on the driver process on a single CPU/GPU node.
     """
-    def _dump_generations(self, inputs, outputs, scores, reward_extra_infos_dict, dump_path):
-        """Dump rollout/validation samples as JSONL."""
-        os.makedirs(dump_path, exist_ok=True)
-        filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
-
-        n = len(inputs)
-        base_data = {
-            "input": inputs,
-            "output": outputs,
-            "score": scores,
-            "step": [self.global_steps] * n
-        }
-
-        for k, v in reward_extra_infos_dict.items():
-            if len(v) == n:
-                base_data[k] = v
-
-        lines = []
-        for i in range(n):
-            entry = {k: v[i] for k, v in base_data.items()}
-            lines.append(json.dumps(entry, ensure_ascii=False))
-
-        with open(filename, "w") as f:
-            f.write("\n".join(lines) + "\n")
-
-        print(f"Dumped generations to {filename}")
 
     def fit(self):
         """
@@ -403,7 +375,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                                 inputs=inputs,
                                 outputs=outputs,
                                 scores=scores,
-                                reward_extra_infos_dict={k:v for k,v in batch.non_tensor_batch.items() if k==metric_name or k=="data_source" or k=="id"},
+                                reward_extra_infos_dict=reward_extra_infos_dict,
                                 dump_path=rollout_data_dir,
                             )
 

@@ -45,9 +45,9 @@ def default_compute_score(
 
         res = gsm8k.compute_score(solution_str, ground_truth)
     elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval"]:
-        from . import math_basic
+        from . import math
 
-        res = math_basic.compute_score(solution_str, ground_truth)
+        res = math.compute_score(solution_str, ground_truth)
         # [Optional] Math-Verify Integration
         # For enhanced accuracy, consider utilizing Math-Verify (https://github.com/huggingface/Math-Verify).
         # Note: Math-Verify needs to be manually installed via pip: `pip install math-verify`.
@@ -103,10 +103,6 @@ def default_compute_score(
         from . import robopoint_gaussian
 
         res = robopoint_gaussian.compute_score_format91(solution_str, ground_truth)
-    elif data_source in ["robopoint01"]:
-        from . import robopoint
-
-        res = robopoint.compute_score_format91(solution_str, ground_truth)
     elif data_source in ["egolife_geoR"]:
         from . import egolife
 
@@ -129,6 +125,22 @@ def default_compute_score(
         from . import search_r1_like_qa_em
 
         res = search_r1_like_qa_em.compute_score(solution_str, ground_truth)
+    elif data_source in ["egolife", "cosmos", "scannet"]:
+        from . import egolife
+
+        res = egolife.compute_score_formatE(solution_str, ground_truth)
+    elif data_source in ["robopoint"]:
+        # from . import robopoint
+        from . import robopoint_gaussian
+
+        res = robopoint_gaussian.compute_score(solution_str, ground_truth)
+    elif data_source in ["egolife_geoR"]:
+        from . import egolife
+
+        res = egolife.compute_score_formatE(solution_str, ground_truth)
+    
+    elif data_source in ["egolife_geoR73"]:
+        from . import egolife
 
     else:
         # raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
@@ -136,7 +148,6 @@ def default_compute_score(
         res = no_format.compute_score(solution_str, ground_truth)
 
     if isinstance(res, dict):
-        res['data_source'] = data_source
         return res
     elif isinstance(res, int | float | bool):
         return float(res)

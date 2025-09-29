@@ -116,6 +116,7 @@ def number_fuzzy_matching(pred: str) -> str:
 def acc_reward(predict_str: str, ground_truth: str) -> float:
     reward = 0.0
     try:
+        # print("extract_option_pred(predict_str):", extract_option_pred(predict_str))
         reward = mean_relative_accuracy(to_float(number_fuzzy_matching(extract_option_pred(predict_str))), to_float(ground_truth), start=.5, end=.95, interval=.05)
     except Exception as e:
         # print("e:", e)
@@ -130,10 +131,8 @@ def compute_score_format73(predict_str: str, ground_truth: str) -> float:
     return 0.7 * acc_reward(predict_str, ground_truth) + 0.3 * format_reward(predict_str)
 
 def compute_score_format91(predict_str: str, ground_truth: str) -> float:
-    return {
-        "acc": acc_reward(predict_str, ground_truth),
-        "score": 0.9 * acc_reward(predict_str, ground_truth) + 0.1 * format_reward(predict_str)
-    }
+    return 0.9 * acc_reward(predict_str, ground_truth) + 0.1 * format_reward(predict_str)
+
 def compute_score_formatE(predict_str: str, ground_truth: str) -> float:
     return 0.5 * acc_reward(predict_str, ground_truth) + 0.5 * format_reward(predict_str)
 
