@@ -90,7 +90,7 @@ def default_compute_score(
 
         res = geo3k.compute_score(solution_str, ground_truth)
 
-    elif data_source in ["egolife","cosmos", "scannet_mcq", "vsibench_mcq", "phyx"]:
+    elif data_source in ["egolife","cosmos", "scannet_mcq", "vsibench_mcq", "phyx", "omni"]:
         from . import egolife
 
         res = egolife.compute_score_format91(solution_str, ground_truth)
