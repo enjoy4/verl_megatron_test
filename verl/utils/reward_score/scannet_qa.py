@@ -116,7 +116,6 @@ def number_fuzzy_matching(pred: str) -> str:
 def acc_reward(predict_str: str, ground_truth: str) -> float:
     reward = 0.0
     try:
-        # print("extract_option_pred(predict_str):", extract_option_pred(predict_str))
         reward = mean_relative_accuracy(to_float(number_fuzzy_matching(extract_option_pred(predict_str))), to_float(ground_truth), start=.5, end=.95, interval=.05)
     except Exception as e:
         # print("e:", e)

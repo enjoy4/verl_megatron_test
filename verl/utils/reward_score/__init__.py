@@ -45,9 +45,9 @@ def default_compute_score(
 
         res = gsm8k.compute_score(solution_str, ground_truth)
     elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval"]:
-        from . import math
+        from . import math_basic
 
-        res = math.compute_score(solution_str, ground_truth)
+        res = math_basic.compute_score(solution_str, ground_truth)
         # [Optional] Math-Verify Integration
         # For enhanced accuracy, consider utilizing Math-Verify (https://github.com/huggingface/Math-Verify).
         # Note: Math-Verify needs to be manually installed via pip: `pip install math-verify`.
@@ -90,7 +90,7 @@ def default_compute_score(
 
         res = geo3k.compute_score(solution_str, ground_truth)
 
-    elif data_source in ["egolife","cosmos", "scannet_mcq", "vsibench_mcq", "phyx"]:
+    elif data_source in ["egolife","cosmos", "scannet_mcq", "vsibench_mcq", "phyx", "omni"]:
         from . import egolife
 
         res = egolife.compute_score_format91(solution_str, ground_truth)
@@ -136,6 +136,7 @@ def default_compute_score(
         res = no_format.compute_score(solution_str, ground_truth)
 
     if isinstance(res, dict):
+        res['data_source'] = data_source
         return res
     elif isinstance(res, int | float | bool):
         return float(res)

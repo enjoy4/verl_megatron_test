@@ -147,6 +147,10 @@ class RLHFDataset(Dataset):
                               if self.enable_filter_epochs else dataframe)
         self.dataframe: datasets.Dataset = datasets.concatenate_datasets(dataframes)
 
+        self.dataframe = self.dataframe.map(
+            lambda example, idx: {**example, "id": idx},
+            with_indices=True
+        )
         print(f"dataset len: {len(self.dataframe)}")
 
         self.dataframe = self.maybe_filter_out_long_prompts(self.dataframe)
