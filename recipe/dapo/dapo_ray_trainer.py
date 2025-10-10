@@ -118,11 +118,14 @@ class RayDAPOTrainer(RayPPOTrainer):
 
         timing_raw = defaultdict(float)
         batch = None
+        final_gen_batch = None
         all_none_batch = None
         num_prompt_in_batch = 0
+        num_reserved_in_batch = 0
         num_gen_batches = 0
         num_solve_all = 0
         num_solve_none = 0
+        reserved_idx = None
 
         n_filter_epochs = self.config.data.get("n_filter_epochs", -1)
 
@@ -134,13 +137,36 @@ class RayDAPOTrainer(RayPPOTrainer):
             print(f"--------------- epoch: {epoch}-------------")
 
             for batch_dict in self.train_dataloader:
+
+                num_gen_batches += 1
+
                 if n_filter_epochs > 0:
                     # filter solve all/none samples that appear consecutively n_filter_epochs times in this step, (ndarray, )
-                    reserved_idx = np.where(batch_dict['filter_epochs'] < n_filter_epochs)
-                    if len(reserved_idx[0]) == 0:
+                    single_reserved_idx = np.where(batch_dict['filter_epochs'] < n_filter_epochs)
+                    num_reserved_in_batch += len(single_reserved_idx[0])
+                    if len(single_reserved_idx[0]) == 0:
                         print("filter all samples in this step")
                         progress_bar.update(1)
                         continue
+
+                    new_batch: DataProto = DataProto.from_single_dict(batch_dict)[single_reserved_idx[0]]
+
+                    final_gen_batch = new_batch if final_gen_batch is None else DataProto.concat([final_gen_batch, new_batch])
+                    reserved_idx = single_reserved_idx if reserved_idx is None else (np.concatenate((reserved_idx[0], single_reserved_idx[0])), )
+                    gen_batch_size = self.config.data.gen_batch_size
+                    if num_reserved_in_batch < gen_batch_size:
+                        print(f"{num_reserved_in_batch=} < {gen_batch_size=}, Keep getting data...")
+                        progress_bar.update(1)
+                        continue
+                    else:
+                        new_batch = final_gen_batch[:gen_batch_size]
+                        print(f"waste {len(final_gen_batch) - gen_batch_size} samples")
+                        final_gen_batch = None
+                        num_reserved_in_batch = 0
+                else:
+                    new_batch: DataProto = DataProto.from_single_dict(batch_dict)
+
+                print(f"new_batch length: {len(new_batch)}")
 
                 metrics = {}
 
@@ -159,11 +185,6 @@ class RayDAPOTrainer(RayPPOTrainer):
                         if self.use_rm:
                             self.rm_wg.start_profile()
 
-                new_batch: DataProto = DataProto.from_single_dict(batch_dict)[reserved_idx[0]] \
-                                        if n_filter_epochs > 0 else DataProto.from_single_dict(batch_dict)
-                print(f"new_batch length: {len(new_batch)}")
-
-                num_gen_batches += 1
                 # pop those keys for generation
                 if "multi_modal_data" in new_batch.non_tensor_batch.keys():
                     gen_batch = new_batch.pop(
@@ -520,11 +541,14 @@ class RayDAPOTrainer(RayPPOTrainer):
                 metrics["batch/solve_none"] = num_solve_none/(num_gen_batches*self.config.data.train_batch_size)
                 metrics['batch/total_cnt'] = total_cnt
                 batch = None
+                final_gen_batch = None
                 all_none_batch = None
                 num_prompt_in_batch = 0
+                num_reserved_in_batch = 0
                 num_gen_batches = 0
                 num_solve_all = 0
                 num_solve_none = 0
+                reserved_idx = None
 
                 # TODO: make a canonical logger that supports various backend
                 logger.log(data=metrics, step=self.global_steps)
