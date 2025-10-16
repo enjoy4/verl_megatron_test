@@ -107,6 +107,10 @@ def default_compute_score(
         from . import robopoint
 
         res = robopoint.compute_score_format91(solution_str, ground_truth)
+    elif data_source in ["robopointbox"]:
+        from . import robopoint_box
+
+        res = robopoint_box.compute_score_format91(solution_str, ground_truth)
     elif data_source in ["egolife_geoR"]:
         from . import egolife
 
