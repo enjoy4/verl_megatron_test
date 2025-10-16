@@ -14,6 +14,7 @@
 
 import re
 
+from .common_utils import cot_reward
 from mathruler.grader import extract_boxed_content, grade_answer
 
 def last_boxed_only_string(string: str) -> str:
@@ -121,9 +122,11 @@ def compute_score_formatE(predict_str: str, ground_truth: str) -> float:
     return 0.5 * acc_reward(predict_str, ground_truth) + 0.5 * format_reward(predict_str)
 
 def compute_score_format91(predict_str: str, ground_truth: str) -> float:
+    acc_reward_score = acc_reward(predict_str, ground_truth)
+    format_reward_score = format_reward(predict_str)
     return {
-        "acc": acc_reward(predict_str, ground_truth),
-        "score": 0.9 * acc_reward(predict_str, ground_truth) + 0.1 * format_reward(predict_str)
+        "acc": acc_reward_score,
+        "score": 0.5 * acc_reward_score + 0.1 * format_reward_score + 0.4 * cot_reward(predict_str, acc_reward_score)
     }
 
 def compute_score_no_format(predict_str: str, ground_truth: str) -> float:
