@@ -4,6 +4,8 @@ from typing import List, Tuple
 import math
 import unittest
 
+from .common_utils import cot_reward
+
 def last_boxed_only_string(string: str) -> str:
     idx = string.rfind("\\boxed")
     if idx < 0:
@@ -153,7 +155,7 @@ def compute_score_format91(predict_str: str, ground_truth: str) -> float:
     format_reward_score = format_reward(predict_str)
     return {
         "acc": acc_reward_score,
-        "score": 0.9 * acc_reward_score + 0.1 * format_reward_score
+        "score": 0.5 * acc_reward_score + 0.1 * format_reward_score + 0.4 * cot_reward(predict_str, acc_reward_score)
     }
 
 
