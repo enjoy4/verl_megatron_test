@@ -88,6 +88,7 @@ class RLHFDataset(Dataset):
         tokenizer: PreTrainedTokenizer,
         config: DictConfig,
         processor: Optional[ProcessorMixin] = None,
+        is_train: bool = False
     ):
         if not isinstance(data_files, list | ListConfig):
             data_files = [data_files]
@@ -97,6 +98,7 @@ class RLHFDataset(Dataset):
         self.tokenizer = tokenizer
         self.processor = processor
         self.config = config
+        self.is_train = is_train
 
         self.cache_dir = os.path.expanduser(config.get("cache_dir", "~/.cache/verl/rlhf"))
         self.prompt_key = config.get("prompt_key", "prompt")
@@ -107,6 +109,7 @@ class RLHFDataset(Dataset):
         self.return_full_prompt = config.get("return_full_prompt", False)
         self.truncation = config.get("truncation", "error")
         self.filter_overlong_prompts = config.get("filter_overlong_prompts", True)
+        self.total_data_dump_dir = config.get("total_data_dump_dir", None)
 
         self.num_workers = config.get("filter_overlong_prompts_workers", max(1, os.cpu_count() // 4))
         self.num_workers = min(self.num_workers, os.cpu_count())
@@ -140,6 +143,21 @@ class RLHFDataset(Dataset):
             with_indices=True
         )
         print(f"dataset len: {len(self.dataframe)}")
+        if self.total_data_dump_dir is not None:
+            # 确保路径拼接正确
+            if self.is_train:
+                save_path = os.path.join(self.total_data_dump_dir, 'total_train.parquet')
+            else:
+                save_path = os.path.join(self.total_data_dump_dir, 'total_test.parquet')
+
+            # 创建目录
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+            print(f"💾 Saving merged dataset to: {save_path}")
+            self.dataframe.to_parquet(save_path)
+            print(f"✅ Merged parquet saved successfully at: {save_path}")
+
+
 
         self.dataframe = self.maybe_filter_out_long_prompts(self.dataframe)
 
