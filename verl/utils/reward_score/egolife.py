@@ -126,7 +126,7 @@ def compute_score_format91(predict_str: str, ground_truth: str) -> float:
     format_reward_score = format_reward(predict_str)
     return {
         "acc": acc_reward_score,
-        "score": 0.5 * acc_reward_score + 0.1 * format_reward_score + 0.4 * cot_reward(predict_str, acc_reward_score)
+        "score": 0.9 * acc_reward_score + 0.1 * format_reward_score 
     }
 
 def compute_score_no_format(predict_str: str, ground_truth: str) -> float:
