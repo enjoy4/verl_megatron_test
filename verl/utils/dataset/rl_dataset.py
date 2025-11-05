@@ -299,10 +299,6 @@ class RLHFDataset(Dataset):
                     # second_per_grid_ts isn't used for training, just for mrope
                     row_dict["multi_modal_inputs"].pop("second_per_grid_ts", None)
             else:
-                # pure text item
-                trigger = "\n\nPlease reason step by step and put the final answer within \\boxed{}."
-                messages[-1]['content'] = messages[-1]['content'] + trigger
-
                 # text placeholders are used to unify the batch-size
                 row_dict["multi_modal_data"] = multi_modal_data
                 if self.return_multi_modal_inputs:
