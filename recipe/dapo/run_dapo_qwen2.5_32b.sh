@@ -42,6 +42,8 @@ CKPTS_DIR=${CKPTS_DIR:-"${RAY_DATA_HOME}/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${RAY_DATA_HOME}/data/dapo-math-17k.parquet"}
 TEST_FILE=${TEST_FILE:-"${RAY_DATA_HOME}/data/aime-2024.parquet"}
 
+ROLL_FILTER_DUMP_DIR="$LOG_DIR/rollouts_filter"
+
 # Algorithm
 temperature=1.0
 top_p=1.0
@@ -67,6 +69,7 @@ ray job submit --no-wait --runtime-env="${RUNTIME_ENV}" \
     data.max_response_length=${max_response_length} \
     data.gen_batch_size=${gen_prompt_bsz} \
     data.train_batch_size=${train_prompt_bsz} \
+    +data.n_filter_epochs=2 \
     actor_rollout_ref.rollout.n=${n_resp_per_prompt} \
     algorithm.adv_estimator=${adv_estimator} \
     algorithm.use_kl_in_reward=${use_kl_in_reward} \
@@ -127,4 +130,5 @@ ray job submit --no-wait --runtime-env="${RUNTIME_ENV}" \
     trainer.save_freq=5 \
     trainer.total_epochs=1 \
     trainer.default_local_dir="${CKPTS_DIR}" \
+    +trainer.rollout_filter_data_dir="${ROLL_FILTER_DUMP_DIR}" \
     trainer.resume_mode=auto
